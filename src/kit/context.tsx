@@ -16,6 +16,8 @@ type Kit = {
 	/** Open overlays such as help, so the shell can draw them. */
 	overlay: string | undefined;
 	setOverlay: (overlay: string | undefined) => void;
+	/** Ends the app with a result; `gui ask` prints it as JSON. */
+	finish: (value: unknown) => void;
 };
 
 const KitContext = createContext<Kit | undefined>(undefined);
@@ -28,7 +30,14 @@ export function useKit(): Kit {
 	return kit;
 }
 
-export function KitProvider({caps, input, children}: {caps: Caps; input: InputSplitter; children: ReactNode}) {
+type ProviderProps = {
+	caps: Caps;
+	input: InputSplitter;
+	onFinish?: (value: unknown) => void;
+	children: ReactNode;
+};
+
+export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 	const {exit} = useApp();
 	const {write} = useStdout();
 	const keymapRef = useRef<Keymap>(undefined);
@@ -55,23 +64,47 @@ export function KitProvider({caps, input, children}: {caps: Caps; input: InputSp
 		};
 	}, [input, caps]);
 
+	// Text typed faster than it is read, or sent by an agent, arrives as one
+	// chunk; Ink only splits escape sequences, so Enter and Tab ride along too.
+	// The chunk is fed one key at a time, each after the previous one has been
+	// rendered, so handlers see current state. Outside insert mode every
+	// character is a key; in insert mode a run of text goes in as one piece.
+	const pending = useRef<{text?: string; key?: string}[]>([]);
+	const pump = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const drain = useCallback(() => {
+		pump.current = undefined;
+		const next = pending.current[0];
+		if (!next) return;
+		let token: string;
+		if (next.key !== undefined) {
+			token = next.key;
+			pending.current.shift();
+		} else {
+			const text = next.text!;
+			const named: Record<string, string> = {'\r': '<CR>', '\n': '<CR>', '\t': '<Tab>'};
+			const insert = keymap.state.mode === 'insert';
+			const piece = insert ? /^(?:[\r\n\t]|[^\r\n\t]+)/u.exec(text)![0] : [...text][0]!;
+			token = named[piece] ?? (piece === ' ' && !insert ? '<Space>' : piece);
+			const rest = text.slice(piece.length);
+			if (rest) next.text = rest;
+			else pending.current.shift();
+		}
+		keymap.feed(token);
+		if (pending.current.length > 0) pump.current = setTimeout(drain, 2);
+	}, [keymap]);
+
 	useInput((text, key) => {
 		const token = tokenFromInk(text, key);
 		if (!token) {
 			return;
 		}
-		// Text typed faster than it is read arrives as one chunk; outside insert
-		// mode every character is its own key.
-		const chars = [...token];
-		if (chars.length > 1 && !token.startsWith('<') && keymap.state.mode !== 'insert') {
-			// Ink only splits escape sequences; Enter and Tab can ride along in the chunk.
-			const named: Record<string, string> = {' ': '<Space>', '\r': '<CR>', '\n': '<CR>', '\t': '<Tab>'};
-			for (const char of chars) {
-				keymap.feed(named[char] ?? char);
-			}
+		const chunk = [...token].length > 1 && !token.startsWith('<');
+		if (!chunk && pending.current.length === 0) {
+			keymap.feed(token);
 			return;
 		}
-		keymap.feed(token);
+		pending.current.push(chunk ? {text: token} : {key: token});
+		if (!pump.current) drain();
 	});
 
 	const addMouse = useCallback((handler: MouseHandler) => {
@@ -81,6 +114,11 @@ export function KitProvider({caps, input, children}: {caps: Caps; input: InputSp
 		};
 	}, []);
 
+	const finish = useCallback((value: unknown) => {
+		onFinish?.(value);
+		exit();
+	}, [onFinish, exit]);
+
 	const kit: Kit = {
 		keymap,
 		caps,
@@ -88,9 +126,15 @@ export function KitProvider({caps, input, children}: {caps: Caps; input: InputSp
 		addMouse,
 		overlay,
 		setOverlay,
+		finish,
 	};
 
 	return <KitContext.Provider value={kit}>{children}</KitContext.Provider>;
+}
+
+/** Ends the app with a result, e.g. the values of a form. */
+export function useFinish(): (value: unknown) => void {
+	return useKit().finish;
 }
 
 export function useKeymapState(): KeymapState {

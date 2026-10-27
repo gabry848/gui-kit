@@ -1,0 +1,8 @@
+#!/bin/sh
+# Launcher for the gui CLI; follows symlinks so it can live in ~/.local/bin.
+self=$0
+while [ -L "$self" ]; do
+	target=$(readlink "$self")
+	case $target in /*) self=$target ;; *) self=$(dirname "$self")/$target ;; esac
+done
+exec bun "$(cd "$(dirname "$self")/.." && pwd)/src/cli/main.ts" "$@"

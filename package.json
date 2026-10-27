@@ -6,7 +6,8 @@
   "scripts": {
     "demo": "bun src/apps/demo/main.tsx",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "gui": "bun src/cli/main.ts"
   },
   "dependencies": {
     "@xterm/headless": "6.0.0",
@@ -18,5 +19,9 @@
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "typescript": "^7.0.2"
-  }
+  },
+  "bin": {
+    "gui": "./bin/gui"
+  },
+  "main": "./src/kit/index.ts"
 }

@@ -62,7 +62,18 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 		},
 	});
 	const input = new InputSplitter(stdin as unknown as NodeJS.ReadStream);
-	const instance = render(<KitProvider caps={caps} input={input}>{node}</KitProvider>, {
+	let result: {value: unknown} | undefined;
+	// Leaving the alternate screen on exit blanks it, so keep the last frame.
+	let lastFrame: string[] | undefined;
+	const visible = () => {
+		const buffer = term.buffer.active;
+		return Array.from({length: rows}, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '');
+	};
+	const onFinish = (value: unknown) => {
+		result = {value};
+		lastFrame = visible();
+	};
+	const instance = render(<KitProvider caps={caps} input={input} onFinish={onFinish}>{node}</KitProvider>, {
 		...RENDER_OPTIONS,
 		stdout: stdout as unknown as NodeJS.WriteStream,
 		stdin: input as unknown as NodeJS.ReadStream,
@@ -98,13 +109,16 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 			stdin.push(`\u001B[<${code};${x + 1};${y + 1}${kind === 'up' ? 'm' : 'M'}`);
 			await settle(20);
 		},
-		/** The visible screen as text, one string per row. */
+		/** The visible screen as text, one string per row; after finish(), the last frame before it. */
 		lines(): string[] {
-			const buffer = term.buffer.active;
-			return Array.from({length: rows}, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '');
+			return lastFrame ?? visible();
 		},
 		screen(): string {
 			return this.lines().join('\n');
+		},
+		/** What the app passed to finish(), if it has. */
+		result(): {value: unknown} | undefined {
+			return result;
 		},
 		async exit() {
 			instance.unmount();
