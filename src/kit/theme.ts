@@ -16,3 +16,9 @@ export const theme = {
 		command: '#e0af68',
 	},
 } as const;
+
+/** A theme color such as `theme.accent` as the [r, g, b] the Canvas wants. */
+export function rgb(hex: string): [number, number, number] {
+	const value = Number.parseInt(hex.replace('#', ''), 16);
+	return [(value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF];
+}

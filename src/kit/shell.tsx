@@ -1,6 +1,6 @@
-import type {ReactNode} from 'react';
+import {useContext, useState, type ReactNode} from 'react';
 import {Box, Text, useApp, useWindowSize} from 'ink';
-import {useCommand, useKeymapState, useKeys, useKit} from './context.js';
+import {KeyScope, useCommand, useKeymapState, useKeys, useKit} from './context.js';
 import {prettyKeys, type Binding} from './keymap.js';
 import {theme} from './theme.js';
 
@@ -47,15 +47,25 @@ function StatusLine({title, hint}: {title: string; hint: string | undefined}) {
 	}
 	const pending = (state.count > 0 ? String(state.count) : '') + state.pending.join('');
 	return (
-		<Box height={1}>
-			<Text backgroundColor={theme.modes[state.mode]} color={theme.accentText} bold>
-				{` ${MODE_LABEL[state.mode]} `}
-			</Text>
-			<Text color={theme.text}> {title} </Text>
-			{state.message ? <Text color={theme.warning}> {state.message}</Text> : null}
+		<Box height={1} overflow="hidden">
+			<Box flexShrink={0}>
+				<Text backgroundColor={theme.modes[state.mode]} color={theme.accentText} bold>
+					{` ${MODE_LABEL[state.mode]} `}
+				</Text>
+			</Box>
+			<Box flexShrink={1}>
+				<Text color={theme.text} wrap="truncate-end"> {title} </Text>
+			</Box>
+			{state.message ? (
+				<Box flexShrink={0}>
+					<Text color={theme.warning} wrap="truncate-end"> {state.message}</Text>
+				</Box>
+			) : null}
 			<Box flexGrow={1} />
-			{pending ? <Text color={theme.accent}>{pending} </Text> : null}
-			<Text color={theme.muted}>{hint ?? '? aiuto  : comandi  q esci'} </Text>
+			{pending ? <Box flexShrink={0}><Text color={theme.accent}>{pending} </Text></Box> : null}
+			<Box flexShrink={2}>
+				<Text color={theme.muted} wrap="truncate-start">{hint ?? '? aiuto  : comandi  q esci'} </Text>
+			</Box>
 		</Box>
 	);
 }
@@ -82,14 +92,15 @@ function WhichKey() {
 
 function Help({onClose}: {onClose: () => void}) {
 	const {keymap} = useKit();
-	const bindings = keymap.active('normal').filter(binding => binding.group !== 'hidden');
+	// Read the keys once, before this modal layer hides them all.
+	const [bindings] = useState(() => keymap.active('normal').filter(binding => binding.group !== 'hidden'));
 	useKeys(
 		[
 			{keys: '<Esc>', desc: 'Chiudi aiuto', group: 'hidden', run: onClose},
 			{keys: '?', desc: 'Chiudi aiuto', group: 'hidden', run: onClose},
 			{keys: 'q', desc: 'Chiudi aiuto', group: 'hidden', run: onClose},
 		],
-		{modal: true, priority: 20},
+		{modal: true, priority: 1000},
 	);
 	const groups = new Map<string, Binding[]>();
 	for (const binding of bindings) {
@@ -152,5 +163,11 @@ export function Modal({title, onClose, bindings = [], children}: {title: string;
 		],
 		{modal: true},
 	);
-	return <Overlay title={title}>{children}</Overlay>;
+	// Children's keys go above this modal layer, or a Form inside would get none.
+	const scope = useContext(KeyScope);
+	return (
+		<KeyScope.Provider value={scope + 20}>
+			<Overlay title={title}>{children}</Overlay>
+		</KeyScope.Provider>
+	);
 }

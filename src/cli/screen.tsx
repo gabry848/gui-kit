@@ -5,6 +5,12 @@
 // usage: screen.tsx <file> <keys> <cols> <rows>
 
 import {pathToFileURL} from 'node:url';
+
+// Ink's cursor library shows the cursor on stderr at exit; there is no
+// terminal here, so drop that sequence and keep stderr for real errors.
+const writeErr = process.stderr.write.bind(process.stderr);
+process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) =>
+	String(chunk) === '\u001B[?25h' ? true : writeErr(chunk, ...(rest as []))) as typeof process.stderr.write;
 import type {ComponentType} from 'react';
 import {headless} from 'gui-kit/testing';
 

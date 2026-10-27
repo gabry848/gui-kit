@@ -5,7 +5,7 @@
 
 import {pathToFileURL} from 'node:url';
 import type {ComponentType} from 'react';
-import {run} from 'gui-kit';
+import {NoTerminalError, run} from 'gui-kit';
 
 const [mode, file] = process.argv.slice(2);
 const module = (await import(pathToFileURL(file!).href)) as {default?: ComponentType};
@@ -15,7 +15,17 @@ if (typeof App !== 'function') {
 	process.exit(2);
 }
 
-const result = await run(() => <App />);
+let result;
+try {
+	result = await run(() => <App />);
+} catch (error) {
+	if (error instanceof NoTerminalError) {
+		// 3, not 1: an agent must not mistake this for the user cancelling.
+		console.error(`gui: ${error.message}`);
+		process.exit(3);
+	}
+	throw error;
+}
 if (mode === 'ask') {
 	if (!result.finished) process.exit(1);
 	process.stdout.write(JSON.stringify(result.value) + '\n');

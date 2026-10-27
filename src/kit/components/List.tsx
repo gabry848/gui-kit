@@ -11,18 +11,23 @@ type Props<T> = {
 	text: (item: T) => string;
 	onOpen?: (item: T) => void;
 	active?: boolean;
+	/** Rows to show. By default the list fills the space its parent gives it. */
+	height?: number;
 };
 
 /** A scrolling list driven by Vim keys, the mouse wheel and clicks. */
-export function List<T>({items, render, text, onOpen, active = true}: Props<T>) {
+export function List<T>({items, render, text, onOpen, active = true, height: fixedHeight}: Props<T>) {
 	const ref = useRef<DOMElement>(null);
-	const {height} = useBoxMetrics(ref);
+	const {height: measured} = useBoxMetrics(ref);
 	const {keymap} = useKit();
 	const [query, setQuery] = useState('');
 	const [cursor, setCursor] = useState(0);
 	const [offset, setOffset] = useState(0);
 
 	const visible = query ? items.filter(item => text(item).toLowerCase().includes(query.toLowerCase())) : items;
+	// A parent that takes its height from its content measures exactly what was
+	// drawn, so start from up to 10 rows instead of 1, or the list stays one row tall.
+	const height = fixedHeight ?? (measured > 1 ? measured : Math.min(Math.max(visible.length, 1), 10));
 	const rows = Math.max(1, height);
 	const last = Math.max(0, visible.length - 1);
 
@@ -95,7 +100,7 @@ export function List<T>({items, render, text, onOpen, active = true}: Props<T>) 
 	}, active);
 
 	return (
-		<Box ref={ref} flexDirection="column" flexGrow={1} overflow="hidden">
+		<Box ref={ref} flexDirection="column" flexGrow={1} overflow="hidden" {...(fixedHeight ? {height: fixedHeight, flexGrow: 0} : {})}>
 			{visible.slice(offset, offset + rows).map((item, index) => {
 				const selected = offset + index === cursor;
 				return (

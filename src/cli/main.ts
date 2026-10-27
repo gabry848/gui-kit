@@ -1,6 +1,7 @@
 // `gui`: run, ask, check and manage terminal apps built with gui-kit.
 
 import {chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 import {homedir, tmpdir} from 'node:os';
 import {basename, dirname, join, relative, resolve} from 'node:path';
 import {loadRegistry, readManifest, resolveTarget, saveRegistry, type Manifest} from './registry.js';
@@ -15,9 +16,10 @@ const HELP = `gui — app da terminale fatte con gui-kit
 
   gui <app> [argomenti]          avvia un'app installata (come gui run)
   gui run <app|cartella|file>    avvia a schermo intero nel terminale corrente
-  gui ask <app|file>             avvia e scrive su stdout, in JSON, il valore passato a finish();
-                                 esce con 1 se l'utente chiude senza rispondere
-  gui screen <app|file> [--keys K] [--cols N] [--rows N] [argomenti]
+  gui ask <app|cartella|file>    avvia e scrive su stdout, in JSON, il valore passato a finish();
+                                 esce con 1 se l'utente chiude senza rispondere o l'app va in
+                                 errore, con 3 se non c'è un terminale su cui disegnare
+  gui screen <app|cartella|file> [--keys K] [--cols N] [--rows N] [argomenti]
                                  la disegna in un terminale virtuale, preme i tasti K
                                  (notazione Vim: 5j/cerca<CR>) e stampa lo schermo, poi
                                  [finish] <json> o [uscita] se l'app si è chiusa;
@@ -76,18 +78,37 @@ async function runApp(mode: 'run' | 'ask', target: string, appArgs: string[]): P
 	process.exit(code);
 }
 
+const LAUNCHER_MARK = 'Created by gui install';
+
+function isOurLauncher(file: string): boolean {
+	return existsSync(file) && lstatSync(file).isFile() && readFileSync(file, 'utf8').includes(LAUNCHER_MARK);
+}
+
+function checkName(name: string) {
+	if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) fail(`${name}: il nome usa solo minuscole, cifre e trattini`);
+	if (COMMANDS.includes(name)) fail(`${name}: è il nome di un comando di gui, scegline un altro`);
+}
+
+/** A name already installed from another folder is not silently moved. */
+function checkFree(apps: Record<string, {path: string}>, name: string, dir: string) {
+	const other = apps[name];
+	if (other && resolve(other.path) !== resolve(dir)) fail(`${name} è già installata da ${other.path}: prima \`gui uninstall ${name}\``);
+}
+
 function install(dir: string, withBin: boolean): string {
 	const manifest = readManifest(dir);
 	if (!manifest) fail(`${dir}: manca gui.json`);
-	if (COMMANDS.includes(manifest.name)) fail(`${manifest.name}: è il nome di un comando di gui, cambialo in gui.json`);
+	checkName(manifest.name);
 	if (!existsSync(join(dir, manifest.entry))) fail(`${dir}: manca ${manifest.entry}`);
 	const apps = loadRegistry();
-	let bin: string | undefined;
+	checkFree(apps, manifest.name, dir);
+	// Reinstalling without --bin keeps a launcher made earlier.
+	let bin = apps[manifest.name]?.bin && isOurLauncher(apps[manifest.name]!.bin!) ? apps[manifest.name]!.bin : undefined;
 	if (withBin) {
 		bin = join(BIN_DIR, manifest.name);
-		if (existsSync(bin) && !apps[manifest.name]?.bin) fail(`${bin} esiste già e non l'ha creato gui: scegli un altro nome`);
+		if (existsSync(bin) && !isOurLauncher(bin)) fail(`${bin} esiste già e non l'ha creato gui: scegli un altro nome`);
 		mkdirSync(BIN_DIR, {recursive: true});
-		writeFileSync(bin, `#!/bin/sh\n# Created by gui install; gui uninstall removes it.\nexec "${join(KIT, 'bin', 'gui')}" run ${JSON.stringify(manifest.name)} "$@"\n`);
+		writeFileSync(bin, `#!/bin/sh\n# ${LAUNCHER_MARK}; gui uninstall removes it.\nexec "${join(KIT, 'bin', 'gui')}" run ${JSON.stringify(manifest.name)} "$@"\n`);
 		chmodSync(bin, 0o755);
 	}
 	apps[manifest.name] = {
@@ -148,10 +169,15 @@ function newApp(args: string[]) {
 	const from = option(args, '--from');
 	const description = option(args, '--description');
 	const name = args[0];
-	if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) fail('gui new <nome>: il nome usa minuscole, cifre e trattini');
-	if (COMMANDS.includes(name)) fail(`gui new ${name}: è il nome di un comando di gui, scegline un altro`);
+	if (!name) fail('gui new <nome>');
+	checkName(name);
 	const dir = resolve(dirOption ?? name);
-	if (existsSync(dir) && existsSync(join(dir, 'gui.json'))) fail(`${dir} contiene già un gui.json`);
+	// Check everything before writing, so a refusal leaves nothing behind.
+	for (const file of ['gui.json', 'app.tsx', 'tsconfig.json']) {
+		if (existsSync(join(dir, file))) fail(`${join(dir, file)} esiste già: gui new non sovrascrive file`);
+	}
+	if (from && !existsSync(resolve(from))) fail(`${from}: file non trovato`);
+	checkFree(loadRegistry(), name, dir);
 	mkdirSync(dir, {recursive: true});
 	const manifest: Manifest = {name, entry: 'app.tsx', ...(description ? {description} : {})};
 	writeFileSync(join(dir, 'gui.json'), JSON.stringify(manifest, null, '\t') + '\n');
@@ -167,7 +193,8 @@ async function check(target: string): Promise<never> {
 	const configDir = join(tmpdir(), 'gui-check');
 	mkdirSync(configDir, {recursive: true});
 	const config = JSON.parse(tsconfig()) as {compilerOptions: object};
-	const file = join(configDir, `${basename(resolved.file)}.tsconfig.json`);
+	// One config per app file, so checks running at the same time stay apart.
+	const file = join(configDir, `${basename(resolved.file)}-${createHash('sha1').update(resolved.file).digest('hex').slice(0, 12)}.tsconfig.json`);
 	writeFileSync(file, JSON.stringify({...config, files: [resolved.file]}));
 	const proc = Bun.spawn([join(KIT, 'node_modules', '.bin', 'tsc'), '-p', file], {stdio: ['inherit', 'inherit', 'inherit']});
 	const code = await proc.exited;
@@ -231,9 +258,7 @@ try {
 			const apps = loadRegistry();
 			const app = rest[0] ? apps[rest[0]] : undefined;
 			if (!app) fail(`${rest[0] ?? ''}: non è installata`);
-			if (app.bin && existsSync(app.bin) && lstatSync(app.bin).isFile() && readFileSync(app.bin, 'utf8').includes('Created by gui install')) {
-				rmSync(app.bin);
-			}
+			if (app.bin && isOurLauncher(app.bin)) rmSync(app.bin);
 			delete apps[rest[0]!];
 			saveRegistry(apps);
 			console.log(`Disinstallata: ${rest[0]} (i file in ${app.path} restano)`);

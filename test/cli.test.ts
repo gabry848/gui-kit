@@ -82,3 +82,27 @@ export default function App() {
 	expect(screen.stdout).toContain('argomenti: uno,due');
 	expect(screen.stdout).toContain('[uscita]');
 }, 30_000);
+
+test('new never overwrites, install never moves a name, launchers survive a reinstall', async () => {
+	const keep = join(home, 'keep');
+	await cli('new', 'tmp-keep', '--dir', keep);
+	writeFileSync(join(home, 'existing.tsx'), 'IMPORTANT');
+	const clash = await cli('new', 'altra', '--dir', keep);
+	expect(clash.code).toBe(2);
+	expect(clash.stderr).toContain('non sovrascrive');
+
+	const missingFrom = await cli('new', 'da-niente', '--dir', join(home, 'niente'), '--from', join(home, 'non-esiste.tsx'));
+	expect(missingFrom.code).toBe(2);
+	expect(existsSync(join(home, 'niente', 'gui.json'))).toBe(false);
+
+	const moved = await cli('new', 'tmp-keep', '--dir', join(home, 'altrove'));
+	expect(moved.code).toBe(2);
+	expect(moved.stderr).toContain('già installata');
+
+	expect((await cli('install', keep, '--bin')).code).toBe(0);
+	expect((await cli('install', keep)).code).toBe(0);
+	const bin = join(home, '.local', 'bin', 'tmp-keep');
+	expect(existsSync(bin)).toBe(true);
+	await cli('uninstall', 'tmp-keep');
+	expect(existsSync(bin)).toBe(false);
+}, 60_000);

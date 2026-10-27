@@ -4,13 +4,16 @@ import {useKeys} from '../context.js';
 import {theme} from '../theme.js';
 import {List} from './List.js';
 
+/** One column per key of the row; `format` gets that key's own value type. */
 export type Column<T> = {
-	key: keyof T & string;
-	title: string;
-	width?: number;
-	align?: 'left' | 'right';
-	format?: (value: T[keyof T], row: T) => string;
-};
+	[K in keyof T & string]: {
+		key: K;
+		title: string;
+		width?: number;
+		align?: 'left' | 'right';
+		format?: (value: T[K], row: T) => string;
+	};
+}[keyof T & string];
 
 type Props<T> = {
 	columns: Column<T>[];
@@ -29,7 +32,10 @@ export function Table<T extends Record<string, unknown>>({columns, rows, onOpen,
 	const [sort, setSort] = useState<{column: number; descending: boolean} | undefined>();
 	// Room for the title plus its sort arrow, or the widest of the first 200 cells.
 	const widths = columns.map(column => column.width ?? Math.max(column.title.length + 2, ...rows.slice(0, 200).map(row => String(row[column.key] ?? '').length)) + 1);
-	const cell = (row: T, column: Column<T>) => (column.format ? column.format(row[column.key], row) : String(row[column.key] ?? ''));
+	const cell = (row: T, column: Column<T>) => {
+		const format = column.format as ((value: unknown, row: T) => string) | undefined;
+		return format ? format(row[column.key], row) : String(row[column.key] ?? '');
+	};
 
 	const sorted = sort === undefined ? rows : [...rows].sort((a, b) => {
 		const column = columns[sort.column]!;

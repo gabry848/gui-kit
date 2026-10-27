@@ -1,8 +1,8 @@
 // Everything an app needs comes from 'gui-kit', React and Ink included, so an
 // app file has one import and always shares the kit's React.
 
-export {run, type RunResult} from './runtime.js';
-export {useCommand, useFinish, useKeymapState, useKeys, useKit, useMouse} from './context.js';
+export {NoTerminalError, run, type RunResult} from './runtime.js';
+export {KeyScope, useCommand, useFinish, useKeymapState, useKeys, useKit, useMouse} from './context.js';
 export {Modal, Overlay, Shell} from './shell.js';
 export {List} from './components/List.js';
 export {TextInput} from './components/TextInput.js';
@@ -15,7 +15,7 @@ export {Raster, type RGB} from './canvas/raster.js';
 export type {Backend} from './canvas/encode.js';
 export type {Binding, Mode} from './keymap.js';
 export type {Caps} from './probe.js';
-export {theme} from './theme.js';
+export {rgb, theme} from './theme.js';
 
-export {Box, Newline, Spacer, Text} from 'ink';
-export {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+export {Box, Newline, Spacer, Text, useWindowSize} from 'ink';
+export {createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react';

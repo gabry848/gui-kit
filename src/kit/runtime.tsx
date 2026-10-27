@@ -17,6 +17,13 @@ export const RENDER_OPTIONS = {
 
 export type RunResult = {finished: true; value: unknown} | {finished: false};
 
+/** The process has no terminal to draw on, e.g. an agent's shell tool. */
+export class NoTerminalError extends Error {
+	constructor() {
+		super('nessun terminale: avvia l\'app in un terminale vero (per un agente, una finestra di Ghostty aperta con ghostty-mcp)');
+	}
+}
+
 /**
  * The terminal the app draws on. When stdout is piped, as in
  * `result=$(gui ask form.tsx)`, the app opens its terminal device like fzf
@@ -29,7 +36,8 @@ function terminal(): {stdin: NodeJS.ReadStream; stdout: NodeJS.WriteStream} {
 		return {stdin: process.stdin, stdout: process.stdout};
 	}
 	const name = Bun.spawnSync(['ps', '-o', 'tty=', '-p', String(process.pid)]).stdout.toString().trim();
-	const device = name && name !== '??' ? `/dev/${name}` : '/dev/tty';
+	if (!name || name === '??') throw new NoTerminalError();
+	const device = `/dev/${name}`;
 	return {
 		stdin: new ReadStream(openSync(device, 'r')) as NodeJS.ReadStream,
 		stdout: new WriteStream(openSync(device, 'w')) as NodeJS.WriteStream,
@@ -59,8 +67,11 @@ export async function run(app: (caps: Caps) => ReactNode): Promise<RunResult> {
 		// The probe already asked; letting Ink ask again leaves its reply on screen.
 		kittyKeyboard: {mode: caps.kittyKeyboard ? 'enabled' : 'disabled', flags: ['disambiguateEscapeCodes']},
 	});
-	await instance.waitUntilExit();
-	restore();
-	stdin.pause();
+	try {
+		await instance.waitUntilExit();
+	} finally {
+		restore();
+		stdin.pause();
+	}
 	return result;
 }

@@ -160,6 +160,15 @@ export class Keymap {
 		this.feedNormal(token);
 	}
 
+	/** Literal text typed in insert mode, never read as a key name such as `<CR>`. */
+	insertText(text: string) {
+		if (this.state.mode === 'insert') {
+			this.textTarget()?.onText?.(text);
+			return;
+		}
+		for (const char of text) this.feed(char === ' ' ? '<Space>' : char);
+	}
+
 	private textTarget(): Layer | undefined {
 		for (let index = this.layers.length - 1; index >= 0; index--) {
 			if (this.layers[index]!.onText) {
@@ -175,8 +184,15 @@ export class Keymap {
 	private feedNormal(token: string) {
 		clearTimeout(this.timer);
 		const {pending, count} = this.state;
-		if (pending.length === 0 && /^[0-9]$/.test(token) && (token !== '0' || count > 0)) {
+		// A digit is a count, unless the app binds keys that start with it and no
+		// count is being typed: then `1` can be a key of its own.
+		const digitIsKey = count === 0 && this.active().some(binding => tokenize(binding.keys)[0] === token);
+		if (pending.length === 0 && /^[0-9]$/.test(token) && (token !== '0' || count > 0) && !digitIsKey) {
 			this.set({count: count * 10 + Number(token), message: ''});
+			return;
+		}
+		if (pending.length > 0 && token === '<Esc>') {
+			this.set({pending: [], count: 0, next: [], message: ''});
 			return;
 		}
 		if (pending.length === 0 && token === '<Esc>') {
@@ -194,6 +210,15 @@ export class Keymap {
 			return;
 		}
 		if (matches.length === 0) {
+			if (pending.length > 0) {
+				// The new key does not continue the sequence: run what was typed if it
+				// is a command itself (as Vim does), then take the key on its own.
+				const done = bindings.find(binding => tokenize(binding.keys).length === pending.length && startsWith(tokenize(binding.keys), pending));
+				if (done) this.runBinding(done);
+				else this.set({pending: [], next: []});
+				this.feedNormal(token);
+				return;
+			}
 			this.set({pending: [], count: 0, next: [], message: token === '<Esc>' ? '' : `Nessun comando: ${sequence.join('')}`});
 			return;
 		}

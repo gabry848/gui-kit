@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {Canvas, Confirm, Form, Select, Shell, Table, useFinish} from '../src/kit/index.js';
+import {Box, Canvas, Confirm, Form, List, Modal, rgb, Select, Shell, Table, Text, useEffect, useFinish, useKeys, useState} from '../src/kit/index.js';
 import {headless} from '../src/kit/testing.js';
 
 function FormApp() {
@@ -160,4 +160,99 @@ test('canvas asked for kitty without GUI_GRAPHICS=kitty draws braille', async ()
 	expect(app.screen()).toMatch(/[⠁-⣿]/);
 	expect(app.screen()).not.toContain(String.fromCodePoint(0x10_EE_EE));
 	await app.exit();
+});
+
+test('a Form and a Confirm inside a Modal get their keys', async () => {
+	function ModalForm() {
+		const finish = useFinish();
+		const [step, setStep] = useState<'form' | 'confirm'>('form');
+		const [name, setName] = useState('');
+		return (
+			<Shell title="m">
+				<Modal title="Nuova nota" onClose={() => finish('chiuso')}>
+					{step === 'form' ? (
+						<Form fields={[{name: 'titolo', label: 'Titolo', type: 'text'}]} onSubmit={values => {
+							setName(String(values['titolo']));
+							setStep('confirm');
+						}} />
+					) : (
+						<Confirm question="Salvo?" onAnswer={yes => finish(yes ? name : null)} />
+					)}
+				</Modal>
+			</Shell>
+		);
+	}
+	const app = await headless(<ModalForm />, {cols: 70, rows: 14});
+	await app.press('iSpesa<Space>sabato<C-s>');
+	expect(app.screen()).toContain('Salvo?');
+	await app.press('y');
+	expect(app.result()).toEqual({value: 'Spesa sabato'});
+	await app.exit();
+});
+
+test('help keeps its keys while the app redraws on its own', async () => {
+	function Ticking() {
+		const [tick, setTick] = useState(0);
+		useEffect(() => {
+			const timer = setInterval(() => setTick(value => value + 1), 15);
+			return () => clearInterval(timer);
+		}, []);
+		return <Shell title={`t${tick % 10}`}><List items={['a', 'b']} text={item => item} render={item => <Text>{item}</Text>} /></Shell>;
+	}
+	const app = await headless(<Ticking />, {cols: 80, rows: 24});
+	await app.press('?');
+	await app.settle(80);
+	expect(app.screen()).toContain('Mezza pagina giù');
+	await app.exit();
+});
+
+test('a list in a box sized by its content shows its rows', async () => {
+	function Boxed() {
+		return (
+			<Shell title="b">
+				<Box flexDirection="column">
+					<Text>sopra</Text>
+					<List items={['uno', 'due', 'tre']} text={item => item} render={item => <Text>{item}</Text>} />
+				</Box>
+			</Shell>
+		);
+	}
+	const app = await headless(<Boxed />, {cols: 40, rows: 10});
+	expect(app.screen()).toContain('tre');
+	await app.exit();
+});
+
+test('chunks: Ctrl keys inside text act as keys, text starting with < stays text', async () => {
+	const app = await headless(<FormApp />, {cols: 80, rows: 12});
+	await app.type('i<b>Anna\u0013');
+	expect(app.result()).toEqual({value: {nome: '<b>Anna', stack: 'bun', git: false}});
+	await app.exit();
+});
+
+test('digit keys, an unfinished sequence, and a throwing handler', async () => {
+	const log: string[] = [];
+	function Keys() {
+		useKeys([
+			{keys: '1', desc: 'Uno', run: () => log.push('1')},
+			{keys: 'g', desc: 'G', run: () => log.push('g')},
+			{keys: 'gt', desc: 'Gt', run: () => log.push('gt')},
+			{keys: 'x', desc: 'X', run: () => log.push('x')},
+			{keys: 'b', desc: 'Boom', run: () => {
+				throw new Error('boom');
+			}},
+		]);
+		return <Shell title="k"><Text>tasti</Text></Shell>;
+	}
+	const app = await headless(<Keys />, {cols: 60, rows: 6});
+	await app.press('1gxgt');
+	expect(log).toEqual(['1', 'g', 'x', 'gt']);
+	await app.press('b');
+	await app.settle(40);
+	expect(app.exited()).toBe(true);
+	expect(String(app.error())).toContain('boom');
+	await app.exit();
+});
+
+test('rgb turns a theme color into a Canvas color', () => {
+	expect(rgb('#7aa2f7')).toEqual([0x7A, 0xA2, 0xF7]);
 });

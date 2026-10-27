@@ -39,7 +39,8 @@ export function capsFromReplies(replies: string, env: NodeJS.ProcessEnv): Caps {
 		graphics: kittyGraphicsDetected && env['GUI_GRAPHICS'] === 'kitty' ? 'kitty' : 'none',
 		kittyGraphicsDetected,
 		truecolor: /truecolor|24bit/i.test(env['COLORTERM'] ?? '') || kittyGraphicsDetected,
-		sgrPixels: mode(1016) && env['GUI_MOUSE_PIXELS'] !== '0',
+		// Pixel reports are only usable when the cell size is known.
+		sgrPixels: mode(1016) && cellMatch !== null && env['GUI_MOUSE_PIXELS'] !== '0',
 		syncOutput: mode(2026),
 		kittyKeyboard: /\u001B\[\?\d+u/.test(replies),
 		cell: cellMatch ? {h: Number(cellMatch[1]), w: Number(cellMatch[2])} : undefined,
