@@ -1,0 +1,24 @@
+# AI agents and local agent state
+.pi/
+.agents/
+.claude/
+.codex/
+.cursor/
+.windsurf/
+
+# Dependencies
+node_modules/
+
+# Build and coverage
+dist/
+coverage/
+*.tsbuildinfo
+
+# Environment and local files
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Logs
+*.log
