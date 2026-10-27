@@ -13,7 +13,7 @@ A kit for full-screen terminal apps built on [Ink](https://github.com/vadimdemed
 
 ## Known issues
 
-- On 2026-10-27, Ghostty 1.3.1 crashed when the demo canvas ran in kitty mode, and the cause is not isolated yet. Kitty mode is off unless you set `GUI_GRAPHICS=kitty`.
+- Ghostty 1.3.1 crashes on some valid zlib payloads sent with `o=z` (see `bench/ghostty-zlib-crash.md`), which is what the first kitty mode sent. The kit now sends PNG, and a full-screen 30 fps stress test passes, but kitty mode stays off unless you set `GUI_GRAPHICS=kitty`.
 
 ## Development
 

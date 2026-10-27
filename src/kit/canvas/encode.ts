@@ -92,15 +92,58 @@ export function encodeHalf(raster: Raster, cols: number, rows: number): string[]
 const PLACEHOLDER = String.fromCodePoint(0x10_EE_EE);
 const CHUNK = 4096;
 
-/** The escape sequence that uploads the raster as image `id`. */
+const CRC_TABLE = Array.from({length: 256}, (_, n) => {
+	let c = n;
+	for (let k = 0; k < 8; k++) c = c & 1 ? 0xED_B8_83_20 ^ (c >>> 1) : c >>> 1;
+	return c >>> 0;
+});
+
+function crc32(bytes: Uint8Array, crc = ~0): number {
+	for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xFF]! ^ (crc >>> 8);
+	return crc;
+}
+
+function pngChunk(type: string, data: Uint8Array): Buffer {
+	const head = Buffer.alloc(8);
+	head.writeUInt32BE(data.length, 0);
+	head.write(type, 4, 'ascii');
+	const tail = Buffer.alloc(4);
+	tail.writeUInt32BE(~crc32(data, crc32(head.subarray(4))) >>> 0);
+	return Buffer.concat([head, data, tail]);
+}
+
+/** RGBA raster as a PNG file, compressed fast. */
+export function encodePng(raster: Raster): Buffer {
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(raster.width, 0);
+	header.writeUInt32BE(raster.height, 4);
+	header.set([8, 6, 0, 0, 0], 8);
+	const stride = raster.width * 4;
+	const scanlines = Buffer.alloc((stride + 1) * raster.height);
+	for (let y = 0; y < raster.height; y++) {
+		scanlines.set(raster.data.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1);
+	}
+	return Buffer.concat([
+		Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+		pngChunk('IHDR', header),
+		pngChunk('IDAT', deflateSync(scanlines, {level: 1})),
+		pngChunk('IEND', new Uint8Array()),
+	]);
+}
+
+/**
+ * The escape sequence that uploads the raster as image `id`. It sends PNG
+ * (f=100): Ghostty 1.3.1 crashes decoding some valid zlib streams sent as
+ * o=z, among them those Bun's deflate produces (bench/ghostty-zlib-crash.md).
+ */
 export function kittyTransmit(raster: Raster, cols: number, rows: number, id: number): string {
-	const payload = deflateSync(raster.data, {level: 1}).toString('base64');
+	const payload = encodePng(raster).toString('base64');
 	let out = '';
 	for (let start = 0; start < payload.length; start += CHUNK) {
 		const more = start + CHUNK < payload.length ? 1 : 0;
 		const chunk = payload.slice(start, start + CHUNK);
 		const head = start === 0
-			? `a=T,U=1,f=32,o=z,q=2,i=${id},s=${raster.width},v=${raster.height},c=${cols},r=${rows},m=${more}`
+			? `a=T,U=1,f=100,q=2,i=${id},c=${cols},r=${rows},m=${more}`
 			: `m=${more}`;
 		out += `\u001B_G${head};${chunk}\u001B\\`;
 	}

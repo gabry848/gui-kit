@@ -6,8 +6,8 @@
 export type Caps = {
 	/**
 	 * Pixel graphics through kitty Unicode placeholders. Opt-in with
-	 * GUI_GRAPHICS=kitty: on 2026-10-27 the demo canvas in this mode crashed
-	 * Ghostty 1.3.1, cause not yet isolated.
+	 * GUI_GRAPHICS=kitty while it gets more use: its first version crashed
+	 * Ghostty 1.3.1 (zlib payloads, see bench/ghostty-zlib-crash.md).
 	 */
 	graphics: 'kitty' | 'none';
 	/** The terminal answered the kitty graphics query. */
