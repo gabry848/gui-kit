@@ -53,3 +53,32 @@ test('unknown app fails with a hint', async () => {
 	expect(result.code).toBe(2);
 	expect(result.stderr).toContain('gui ls');
 });
+
+test('names of subcommands are refused, and check catches a missing default export', async () => {
+	const reserved = await cli('new', 'run');
+	expect(reserved.code).toBe(2);
+	expect(reserved.stderr).toContain('comando di gui');
+	const file = join(home, 'senza-default.tsx');
+	writeFileSync(file, `import {Shell, Text} from 'gui-kit';
+export function App() {
+	return <Shell title="x"><Text>ciao</Text></Shell>;
+}
+`);
+	const check = await cli('check', file);
+	expect(check.stdout).toContain('tipi ok');
+	expect(check.code).toBe(2);
+	expect(check.stderr).toContain('esportare di default');
+}, 30_000);
+
+test('screen passes arguments and reports an app that quit', async () => {
+	const file = join(home, 'argomenti.tsx');
+	writeFileSync(file, `import {Shell, Text} from 'gui-kit';
+export default function App() {
+	const args = JSON.parse(process.env.GUI_ARGS ?? '[]') as string[];
+	return <Shell title="args"><Text>{'argomenti: ' + args.join(',')}</Text></Shell>;
+}
+`);
+	const screen = await cli('screen', file, 'uno', 'due', '--keys', 'q', '--cols', '60', '--rows', '6');
+	expect(screen.stdout).toContain('argomenti: uno,due');
+	expect(screen.stdout).toContain('[uscita]');
+}, 30_000);

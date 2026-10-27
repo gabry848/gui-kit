@@ -1,6 +1,14 @@
 # Ghostty crashes on a valid zlib stream in kitty graphics (o=z)
 
-Draft bug report for Ghostty. Not filed yet.
+Draft bug report for Ghostty. Not filed: the bug is already fixed on Ghostty's main branch (see Status), and Ghostty's AI policy asks for a human to edit and post reports.
+
+## Status (checked 2026-10-27)
+
+- **Cause.** Ghostty 1.3.1 inflates `o=z` data with Zig 0.15.2's `std.compress.flate.Decompress`, in `decompressZlib` in `src/terminal/kitty/graphics_image.zig`, into a 64 KiB window. In that Zig version the fixed-Huffman block path does not check the output limit before a back-reference, so a match that crosses the window boundary reaches `Writer.unreachableRebase`. ReleaseFast builds crash there. Dynamic-Huffman blocks have the check, which is why only streams made of fixed-Huffman blocks crash. Bun's `deflateSync` at level 1 emits a single fixed-Huffman block.
+- **Same bug in Zig:** ziglang/zig#24963, #25021 and #24880. It was fixed on Zig master by #25301, which is not in 0.15.2.
+- **Fixed in Ghostty:** ghostty-org/ghostty#14422 (merged 2026-09-28, milestone 1.4.0) decodes `o=z` with wuffs instead of the Zig standard library. No release ships it yet; the latest is still 1.3.1, and the tip builds have it.
+- **PNG (`f=100`)** is decoded with wuffs in 1.3.1 already (`decodePng`), so it was never affected.
+- **Where reports go:** Ghostty takes bug reports as Discussions in the "Issue Triage" category; issues from non-maintainers are closed automatically. `AI_POLICY.md` requires disclosure, and requires that a human reviews and edits AI-assisted text before posting.
 
 ## Summary
 
@@ -35,6 +43,20 @@ Ghostty 1.3.1 on macOS crashes (fatal, the whole app with every window) when a p
 Both inflate to the same 320,000 bytes (400×200 RGBA).
 
 ## What we measured
+
+Root cause test, each stream in its own Ghostty instance:
+
+| Stream (same 400×200 image) | Deflate blocks | Result |
+|---|---|---|
+| Bun `deflateSync`, level 1 | fixed Huffman | crash |
+| Python zlib, `Z_FIXED`, level 1 | fixed Huffman | crash |
+| Python zlib, `Z_FIXED`, level 6 | fixed Huffman | crash |
+| Python zlib, `Z_FIXED`, 512-byte window (`wbits=9`) | fixed Huffman | crash |
+| Python zlib, level 1 | dynamic Huffman | ok |
+| Python zlib, `Z_RLE` | dynamic Huffman | ok |
+| Python zlib, level 0 | stored | ok |
+
+Earlier runs:
 
 Each variant ran in its own Ghostty instance (`bench/kitty-crash-variants.ts`):
 

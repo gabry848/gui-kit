@@ -1,6 +1,6 @@
 import {useRef, useState} from 'react';
 import {Box, Text, type DOMElement} from 'ink';
-import {useKeymapState, useKeys, useMouse} from '../context.js';
+import {useKeymapState, useKeys, useKit, useMouse} from '../context.js';
 import {absolutePosition} from '../layout.js';
 import {theme} from '../theme.js';
 import {TextInput} from './TextInput.js';
@@ -71,6 +71,15 @@ export function Form({fields, onSubmit, submitLabel = 'Conferma', active = true}
 			...(editingText ? [] : [{keys: '<CR>', desc: 'Attiva il campo', group: 'Form', run: activate}]),
 		],
 		{active: active && mode !== 'insert'},
+	);
+	// Ctrl-s also submits while typing in a field.
+	const keymap = useKit().keymap;
+	useKeys(
+		[{keys: '<C-s>', mode: 'insert', desc: 'Invia il form', group: 'hidden', run: () => {
+			keymap.setMode('normal');
+			onSubmit(values);
+		}}],
+		{active},
 	);
 
 	useMouse(event => {

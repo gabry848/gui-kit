@@ -6,6 +6,8 @@ import {basename, dirname, join, relative, resolve} from 'node:path';
 import {loadRegistry, readManifest, resolveTarget, saveRegistry, type Manifest} from './registry.js';
 
 const KIT = resolve(import.meta.dir, '..', '..');
+// Subcommands; an app named like one could not be started as `gui <name>`.
+const COMMANDS = ['help', 'run', 'ask', 'screen', 'check', 'new', 'install', 'link', 'uninstall', 'unlink', 'ls', 'list'];
 const RUNTIME = join(KIT, 'runtime', 'node_modules');
 const BIN_DIR = join(homedir(), '.local', 'bin');
 
@@ -15,10 +17,12 @@ const HELP = `gui — app da terminale fatte con gui-kit
   gui run <app|cartella|file>    avvia a schermo intero nel terminale corrente
   gui ask <app|file>             avvia e scrive su stdout, in JSON, il valore passato a finish();
                                  esce con 1 se l'utente chiude senza rispondere
-  gui screen <app|file> [--keys K] [--cols N] [--rows N]
+  gui screen <app|file> [--keys K] [--cols N] [--rows N] [argomenti]
                                  la disegna in un terminale virtuale, preme i tasti K
-                                 (notazione Vim: 5j/cerca<CR>) e stampa lo schermo
-  gui check <app|cartella|file>  controllo dei tipi (tsc)
+                                 (notazione Vim: 5j/cerca<CR>) e stampa lo schermo, poi
+                                 [finish] <json> o [uscita] se l'app si è chiusa;
+                                 uscita 1 se l'app va in errore
+  gui check <app|cartella|file>  controllo dei tipi (tsc) e prova di avvio senza terminale
   gui new <nome> [--dir D] [--from file.tsx] [--description T]
                                  crea un progetto (gui.json + app.tsx) e lo installa
   gui install [cartella] [--bin] registra l'app col suo nome; --bin crea anche ~/.local/bin/<nome>
@@ -75,6 +79,7 @@ async function runApp(mode: 'run' | 'ask', target: string, appArgs: string[]): P
 function install(dir: string, withBin: boolean): string {
 	const manifest = readManifest(dir);
 	if (!manifest) fail(`${dir}: manca gui.json`);
+	if (COMMANDS.includes(manifest.name)) fail(`${manifest.name}: è il nome di un comando di gui, cambialo in gui.json`);
 	if (!existsSync(join(dir, manifest.entry))) fail(`${dir}: manca ${manifest.entry}`);
 	const apps = loadRegistry();
 	let bin: string | undefined;
@@ -144,6 +149,7 @@ function newApp(args: string[]) {
 	const description = option(args, '--description');
 	const name = args[0];
 	if (!name || !/^[a-z0-9][a-z0-9-]*$/.test(name)) fail('gui new <nome>: il nome usa minuscole, cifre e trattini');
+	if (COMMANDS.includes(name)) fail(`gui new ${name}: è il nome di un comando di gui, scegline un altro`);
 	const dir = resolve(dirOption ?? name);
 	if (existsSync(dir) && existsSync(join(dir, 'gui.json'))) fail(`${dir} contiene già un gui.json`);
 	mkdirSync(dir, {recursive: true});
@@ -165,8 +171,17 @@ async function check(target: string): Promise<never> {
 	writeFileSync(file, JSON.stringify({...config, files: [resolved.file]}));
 	const proc = Bun.spawn([join(KIT, 'node_modules', '.bin', 'tsc'), '-p', file], {stdio: ['inherit', 'inherit', 'inherit']});
 	const code = await proc.exited;
-	if (code === 0) console.log(`${relative(process.cwd(), resolved.file) || resolved.file}: tipi ok`);
-	process.exit(code);
+	const shown = relative(process.cwd(), resolved.file) || resolved.file;
+	if (code !== 0) process.exit(code);
+	console.log(`${shown}: tipi ok`);
+	// Types say nothing about a missing default export or a crash on first render.
+	const smoke = Bun.spawn([process.execPath, join(KIT, 'src', 'cli', 'screen.tsx'), resolved.file, '', '100', '30'], {
+		env: {...ensureRuntime(), GUI_ARGS: '[]', GUI_APP_DIR: resolved.dir},
+		stdio: ['ignore', 'ignore', 'inherit'],
+	});
+	const smokeCode = await smoke.exited;
+	if (smokeCode === 0) console.log(`${shown}: si avvia e si disegna`);
+	process.exit(smokeCode);
 }
 
 const [command = 'help', ...rest] = process.argv.slice(2);
@@ -188,8 +203,13 @@ try {
 			const keys = option(rest, '--keys') ?? '';
 			const cols = option(rest, '--cols') ?? '100';
 			const rows = option(rest, '--rows') ?? '30';
-			if (!rest[0]) fail('gui screen <app|file> [--keys K]');
-			process.exit(await child('screen.tsx', [resolveTarget(rest[0]).file, keys, cols, rows]));
+			const [target, ...appArgs] = rest;
+			if (!target) fail('gui screen <app|file> [--keys K] [argomenti]');
+			const resolved = resolveTarget(target);
+			process.exit(await child('screen.tsx', [resolved.file, keys, cols, rows], {
+				GUI_ARGS: JSON.stringify(appArgs),
+				GUI_APP_DIR: resolved.dir,
+			}));
 			break;
 		}
 		case 'check':

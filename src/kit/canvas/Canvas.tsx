@@ -41,6 +41,9 @@ export function Canvas({backend, version, draw, background = [250, 250, 245], on
 	const {width, height} = useBoxMetrics(ref);
 	const {caps, write} = useKit();
 	const [imageId] = useState(() => (nextImageId++ % 255) + 1);
+	// Kitty pixels only where the probe allowed them (GUI_GRAPHICS=kitty and a
+	// terminal that answered); otherwise draw braille, which works anywhere.
+	if (backend === 'kitty' && caps.graphics !== 'kitty') backend = 'braille';
 	const kitty = backend === 'kitty';
 	const cols = kitty ? Math.min(width, KITTY_MAX_CELLS) : width;
 	const rows = kitty ? Math.min(height, KITTY_MAX_CELLS) : height;

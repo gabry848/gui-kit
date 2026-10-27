@@ -148,7 +148,13 @@ export class Keymap {
 				insertBinding.run(1);
 				return;
 			}
-			this.textTarget()?.onText?.(token);
+			// Space is text; any other named key without a binding (Tab, arrows,
+			// Ctrl-x) is dropped rather than typed as "<Tab>".
+			if (token === '<Space>') {
+				this.textTarget()?.onText?.(' ');
+			} else if (!SPECIAL.test(token)) {
+				this.textTarget()?.onText?.(token);
+			}
 			return;
 		}
 		this.feedNormal(token);

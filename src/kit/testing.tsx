@@ -51,27 +51,40 @@ export const TEST_CAPS: Caps = {graphics: 'none', kittyGraphicsDetected: false, 
 
 export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = TEST_CAPS} = {}) {
 	const term = new xterm.Terminal({cols, rows, allowProposedApi: true, convertEol: true});
+	const visible = () => {
+		const buffer = term.buffer.active;
+		return Array.from({length: rows}, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '');
+	};
+	// Leaving the alternate screen on exit blanks it, so keep the frame drawn
+	// just before that, once xterm has processed everything up to it.
+	let lastFrame: string[] | undefined;
+	const LEAVE_ALT = '\u001B[?1049l';
 	const stdin = new FakeStdin();
 	const stdout = Object.assign(new EventEmitter(), {
 		isTTY: true,
 		columns: cols,
 		rows,
-		write(data: string) {
-			term.write(data);
+		// Ink waits for the write callback before waitUntilExit resolves.
+		write(data: string, encodingOrDone?: unknown, done?: () => void) {
+			const callback = typeof encodingOrDone === 'function' ? (encodingOrDone as () => void) : done;
+			const leave = data.indexOf(LEAVE_ALT);
+			if (leave === -1 || lastFrame) {
+				term.write(data, callback);
+			} else {
+				term.write(data.slice(0, leave), () => {
+					lastFrame = visible();
+				});
+				term.write(data.slice(leave), callback);
+			}
 			return true;
 		},
 	});
 	const input = new InputSplitter(stdin as unknown as NodeJS.ReadStream);
 	let result: {value: unknown} | undefined;
-	// Leaving the alternate screen on exit blanks it, so keep the last frame.
-	let lastFrame: string[] | undefined;
-	const visible = () => {
-		const buffer = term.buffer.active;
-		return Array.from({length: rows}, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '');
-	};
+	let exited = false;
+	let error: unknown;
 	const onFinish = (value: unknown) => {
 		result = {value};
-		lastFrame = visible();
 	};
 	const instance = render(<KitProvider caps={caps} input={input} onFinish={onFinish}>{node}</KitProvider>, {
 		...RENDER_OPTIONS,
@@ -81,6 +94,15 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 		patchConsole: false,
 		kittyKeyboard: {mode: 'disabled'},
 	});
+	instance.waitUntilExit().then(
+		() => {
+			exited = true;
+		},
+		(reason: unknown) => {
+			exited = true;
+			error = reason;
+		},
+	);
 
 	const settle = async (ms = 40) => {
 		await sleep(ms);
@@ -109,7 +131,7 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 			stdin.push(`\u001B[<${code};${x + 1};${y + 1}${kind === 'up' ? 'm' : 'M'}`);
 			await settle(20);
 		},
-		/** The visible screen as text, one string per row; after finish(), the last frame before it. */
+		/** The visible screen as text, one string per row; once the app has exited, its last frame. */
 		lines(): string[] {
 			return lastFrame ?? visible();
 		},
@@ -119,6 +141,14 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 		/** What the app passed to finish(), if it has. */
 		result(): {value: unknown} | undefined {
 			return result;
+		},
+		/** Whether the app has exited (finish, q, :q or an error). */
+		exited(): boolean {
+			return exited;
+		},
+		/** The error the app crashed with, if any. */
+		error(): unknown {
+			return error;
 		},
 		async exit() {
 			instance.unmount();

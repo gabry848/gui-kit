@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {Confirm, Form, Select, Shell, Table, useFinish} from '../src/kit/index.js';
+import {Canvas, Confirm, Form, Select, Shell, Table, useFinish} from '../src/kit/index.js';
 import {headless} from '../src/kit/testing.js';
 
 function FormApp() {
@@ -111,5 +111,53 @@ test('form: keys sent in one chunk act on fresh state', async () => {
 	await app.settle(60);
 	await app.press('<C-s>');
 	expect(app.result()).toEqual({value: {nome: 'abc', stack: 'go', git: true}});
+	await app.exit();
+});
+
+test('form: Space types a space, Tab and arrows type nothing, Ctrl-s submits while typing', async () => {
+	const app = await headless(<FormApp />, {cols: 80, rows: 12});
+	await app.press('iMario<Space>Rossi<Tab><Left><C-s>');
+	expect(app.result()).toEqual({value: {nome: 'Mario Rossi', stack: 'bun', git: false}});
+	await app.exit();
+});
+
+test('after finish the last frame matches the submitted values', async () => {
+	const app = await headless(<FormApp />, {cols: 80, rows: 12});
+	await app.press('jlj<CR><C-s>');
+	expect(app.result()).toEqual({value: {nome: '', stack: 'python', git: true}});
+	expect(app.screen()).toContain('‹ python ›');
+	expect(app.screen()).toContain('[x]');
+	await app.exit();
+});
+
+test('q exits and keeps the last frame; a render error is reported', async () => {
+	const app = await headless(<FormApp />, {cols: 80, rows: 12});
+	await app.press('q');
+	expect(app.exited()).toBe(true);
+	expect(app.result()).toBeUndefined();
+	expect(app.screen()).toContain('Conferma');
+	await app.exit();
+
+	function Broken(): never {
+		throw new Error('rotto');
+	}
+	const broken = await headless(<Shell title="x"><Broken /></Shell>, {cols: 60, rows: 8});
+	await broken.settle(60);
+	expect(broken.exited()).toBe(true);
+	expect(String(broken.error())).toContain('rotto');
+	await broken.exit();
+});
+
+test('canvas asked for kitty without GUI_GRAPHICS=kitty draws braille', async () => {
+	function Kitty() {
+		return (
+			<Shell title="k">
+				<Canvas backend="kitty" version={1} draw={(raster, {sx, sy}) => raster.line(0, 0, 20 * sx, 3 * sy, 0, [0, 0, 0])} />
+			</Shell>
+		);
+	}
+	const app = await headless(<Kitty />, {cols: 60, rows: 8});
+	expect(app.screen()).toMatch(/[⠁-⣿]/);
+	expect(app.screen()).not.toContain(String.fromCodePoint(0x10_EE_EE));
 	await app.exit();
 });
