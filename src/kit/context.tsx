@@ -12,7 +12,9 @@ type Kit = {
 	caps: Caps;
 	/** Raw terminal output for things Ink does not draw, such as image data. */
 	write: (data: string) => void;
-	addMouse: (handler: MouseHandler) => () => void;
+	addMouse: (handler: MouseHandler, scope: number) => () => void;
+	/** While set, mouse events reach only handlers at this key scope or above. */
+	addMouseBarrier: (level: number) => () => void;
 	/** Open overlays such as help, so the shell can draw them. */
 	overlay: string | undefined;
 	setOverlay: (overlay: string | undefined) => void;
@@ -43,7 +45,8 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 	const keymapRef = useRef<Keymap>(undefined);
 	keymapRef.current ??= new Keymap();
 	const keymap = keymapRef.current;
-	const mouseHandlers = useRef(new Set<MouseHandler>());
+	const mouseHandlers = useRef(new Set<{handler: MouseHandler; scope: number}>());
+	const barriers = useRef(new Set<{level: number}>());
 	const [overlay, setOverlay] = useState<string | undefined>();
 
 	useEffect(() => keymap.command('q', 'Chiudi l\'app', () => exit()), [keymap, exit]);
@@ -53,8 +56,10 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 		const onMouse = (report: string) => {
 			const mouse = parseMouse(report, caps.sgrPixels ? caps.cell : undefined);
 			if (mouse) {
-				for (const handler of [...mouseHandlers.current].reverse()) {
-					handler(mouse);
+				// A Modal, a Confirm or the help keeps clicks from reaching the screen below.
+				const floor = Math.max(-Infinity, ...[...barriers.current].map(barrier => barrier.level));
+				for (const {handler, scope} of [...mouseHandlers.current].reverse()) {
+					if (scope >= floor) handler(mouse);
 				}
 			}
 		};
@@ -125,10 +130,18 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 		if (!pump.current) drain();
 	});
 
-	const addMouse = useCallback((handler: MouseHandler) => {
-		mouseHandlers.current.add(handler);
+	const addMouse = useCallback((handler: MouseHandler, scope: number) => {
+		const entry = {handler, scope};
+		mouseHandlers.current.add(entry);
 		return () => {
-			mouseHandlers.current.delete(handler);
+			mouseHandlers.current.delete(entry);
+		};
+	}, []);
+	const addMouseBarrier = useCallback((level: number) => {
+		const entry = {level};
+		barriers.current.add(entry);
+		return () => {
+			barriers.current.delete(entry);
 		};
 	}, []);
 
@@ -142,6 +155,7 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 		caps,
 		write,
 		addMouse,
+		addMouseBarrier,
 		overlay,
 		setOverlay,
 		finish,
@@ -227,7 +241,14 @@ export function useCommand(name: string, desc: string, run: (args: string) => vo
 
 export function useMouse(handler: MouseHandler, active = true) {
 	const {addMouse} = useKit();
+	const scope = useContext(KeyScope);
 	const latest = useRef(handler);
 	latest.current = handler;
-	useEffect(() => (active ? addMouse(event => latest.current(event)) : undefined), [addMouse, active]);
+	useEffect(() => (active ? addMouse(event => latest.current(event), scope) : undefined), [addMouse, active, scope]);
+}
+
+/** Blocks clicks for everything below `level` while the calling component is mounted. */
+export function useMouseBarrier(level: number, active = true) {
+	const {addMouseBarrier} = useKit();
+	useEffect(() => (active ? addMouseBarrier(level) : undefined), [addMouseBarrier, level, active]);
 }

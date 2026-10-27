@@ -256,3 +256,57 @@ test('digit keys, an unfinished sequence, and a throwing handler', async () => {
 test('rgb turns a theme color into a Canvas color', () => {
 	expect(rgb('#7aa2f7')).toEqual([0x7A, 0xA2, 0xF7]);
 });
+
+test('clicks stop at an open Modal, and / goes back to the list after it closes', async () => {
+	const opened: string[] = [];
+	function Screen() {
+		const [open, setOpen] = useState(true);
+		return (
+			<Shell title="m">
+				<List items={['alfa', 'beta', 'gamma', 'delta']} text={item => item} onOpen={item => opened.push(item)} render={item => <Text>{item}</Text>} />
+				{open ? (
+					<Modal title="Scegli" onClose={() => setOpen(false)}>
+						<Select options={[{label: 'uno', value: 1}, {label: 'due', value: 2}]} onSelect={() => setOpen(false)} />
+					</Modal>
+				) : null}
+			</Shell>
+		);
+	}
+	const app = await headless(<Screen />, {cols: 60, rows: 16});
+	await app.mouse('down', 2, 0);
+	await app.mouse('down', 2, 0);
+	expect(opened).toEqual([]);
+	await app.press('<CR>');
+	expect(app.screen()).not.toContain('Scegli');
+	await app.press('/gam<CR>');
+	expect(app.screen()).toContain('gamma');
+	expect(app.screen()).not.toContain('alfa');
+	await app.exit();
+});
+
+test('a misspelled key name stops the app with a clear error', async () => {
+	function Wrong() {
+		useKeys([{keys: '<Enter>', desc: 'x', run: () => {}}]);
+		return <Shell title="w"><Text>x</Text></Shell>;
+	}
+	const app = await headless(<Wrong />, {cols: 60, rows: 6});
+	await app.settle(40);
+	expect(String(app.error())).toContain('Tasto sconosciuto <Enter>');
+	await app.exit();
+});
+
+test('table rows may be declared with an interface; named keys reach bindings', async () => {
+	interface Riga {nome: string; prezzo: number}
+	const log: string[] = [];
+	function Shop() {
+		useKeys([{keys: '<S-Tab>', desc: 's', run: () => log.push('stab')}, {keys: '<Home>', desc: 'h', run: () => log.push('home')}]);
+		const rows: Riga[] = [{nome: 'pane', prezzo: 1.5}];
+		return <Shell title="t"><Table<Riga> columns={[{key: 'nome', title: 'Nome'}, {key: 'prezzo', title: 'Prezzo', align: 'right', format: value => value.toFixed(2)}]} rows={rows} /></Shell>;
+	}
+	const app = await headless(<Shop />, {cols: 60, rows: 6});
+	expect(app.screen()).toContain('1.50');
+	await app.press('<S-Tab><Home>');
+	expect(log).toEqual(['stab', 'home']);
+	await expect(app.press('<Enter>')).rejects.toThrow('non sa inviare');
+	await app.exit();
+});

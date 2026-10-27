@@ -22,7 +22,15 @@ if (typeof App !== 'function') {
 }
 
 const app = await headless(<App />, {cols: Number(cols), rows: Number(rows)});
-if (keys) await app.press(keys);
+if (keys) {
+	try {
+		await app.press(keys);
+	} catch (error) {
+		console.error(String(error instanceof Error ? error.message : error));
+		await app.exit();
+		process.exit(2);
+	}
+}
 await app.settle(80);
 const lines = app.lines();
 while (lines.length > 0 && lines.at(-1)!.trim() === '') lines.pop();
@@ -33,7 +41,8 @@ if (result) process.stdout.write(`\n[finish] ${JSON.stringify(result.value)}\n`)
 else if (app.exited() && !error) process.stdout.write('\n[uscita] l\'app si è chiusa senza finish()\n');
 await app.exit();
 if (error) {
-	console.error(`[errore] ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+	// Under Bun the stack of an error thrown in a key handler starts with a bare "Error".
+	console.error(error instanceof Error ? `[errore] ${error.message}\n${error.stack ?? ''}` : `[errore] ${String(error)}`);
 	process.exit(1);
 }
 process.exit(0);

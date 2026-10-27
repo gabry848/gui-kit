@@ -106,3 +106,21 @@ test('new never overwrites, install never moves a name, launchers survive a rein
 	await cli('uninstall', 'tmp-keep');
 	expect(existsSync(bin)).toBe(false);
 }, 60_000);
+
+test('an installed name wins over a folder of the same name; -- passes arguments verbatim', async () => {
+	await cli('new', 'omonima', '--dir', join(home, 'vera'));
+	const { mkdirSync } = await import('node:fs');
+	mkdirSync(join(home, 'omonima'), {recursive: true});
+	const screen = await cli('screen', 'omonima', '--cols', '50', '--rows', '6');
+	expect(screen.code).toBe(0);
+	expect(screen.stdout).toContain('Primo');
+
+	const file = join(home, 'argomenti2.tsx');
+	writeFileSync(file, `import {Shell, Text} from 'gui-kit';
+export default function App() {
+	return <Shell title="a"><Text>{'args=' + (process.env.GUI_ARGS ?? '')}</Text></Shell>;
+}
+`);
+	const passed = await cli('screen', file, '--rows', '6', '--', '--keys', 'x');
+	expect(passed.stdout).toContain('args=["--keys","x"]');
+}, 30_000);

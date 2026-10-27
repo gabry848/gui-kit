@@ -41,6 +41,18 @@ export type CommandHandler = (args: string) => void;
 
 const SPECIAL = /^<[^>]+>/;
 
+/** Key names the kit produces; anything else in angle brackets can never fire. */
+const KEY_NAMES = new Set(['<CR>', '<Esc>', '<Tab>', '<S-Tab>', '<BS>', '<Del>', '<Up>', '<Down>', '<Left>', '<Right>', '<PageUp>', '<PageDown>', '<Home>', '<End>', '<Space>']);
+
+/** Throws on a misspelled key name such as `<Enter>` or `<C-D>`, which would otherwise fail silently. */
+export function checkKeys(keys: string) {
+	for (const token of tokenize(keys)) {
+		if (!token.startsWith('<') || token.length === 1) continue;
+		if (KEY_NAMES.has(token) || /^<C-[a-z]>$/.test(token) || /^<M-.>$/u.test(token)) continue;
+		throw new Error(`Tasto sconosciuto ${token} in "${keys}": usa ${[...KEY_NAMES].join(' ')}, <C-x> con la lettera minuscola o <M-x>`);
+	}
+}
+
 export function tokenize(keys: string): string[] {
 	const tokens: string[] = [];
 	let rest = keys;
@@ -57,7 +69,11 @@ export class Keymap {
 	private layers: Layer[] = [];
 	private nextId = 1;
 	private commands = new Map<string, {desc: string; run: CommandHandler}>();
-	private searchHandler: ((query: string, live: boolean) => void) | undefined;
+	// The newest search handler wins; closing a Modal hands `/` back to the list below.
+	private searchHandlers: ((query: string, live: boolean) => void)[] = [];
+	private get searchHandler() {
+		return this.searchHandlers.at(-1);
+	}
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private listeners = new Set<Listener>();
 	state: KeymapState = {mode: 'normal', pending: [], count: 0, next: [], cmdline: undefined, message: ''};
@@ -70,6 +86,7 @@ export class Keymap {
 	}
 
 	addLayer(layer: Omit<Layer, 'id'>): Layer {
+		for (const binding of layer.bindings) checkKeys(binding.keys);
 		const added = {...layer, id: this.nextId++};
 		this.layers.push(added);
 		this.layers.sort((a, b) => a.priority - b.priority || a.id - b.id);
@@ -93,8 +110,12 @@ export class Keymap {
 		return [...this.commands].map(([name, {desc}]) => ({name, desc}));
 	}
 
-	onSearch(handler: ((query: string, live: boolean) => void) | undefined) {
-		this.searchHandler = handler;
+	/** Receives `/` searches until the returned function is called. */
+	onSearch(handler: (query: string, live: boolean) => void): () => void {
+		this.searchHandlers.push(handler);
+		return () => {
+			this.searchHandlers = this.searchHandlers.filter(other => other !== handler);
+		};
 	}
 
 	/** Bindings visible right now, topmost layer first, later layers win. */

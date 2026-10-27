@@ -1,5 +1,6 @@
 import {Box, Text} from 'ink';
-import {useKeys} from '../context.js';
+import {useContext} from 'react';
+import {KeyScope, useKeys, useMouseBarrier} from '../context.js';
 import {theme} from '../theme.js';
 
 type Props = {
@@ -19,6 +20,8 @@ export function Confirm({question, onAnswer, active = true}: Props) {
 		],
 		{active, modal: true},
 	);
+	// Like its keys, clicks stop here while the question is open.
+	useMouseBarrier(useContext(KeyScope) + 10, active);
 	return (
 		<Box gap={2}>
 			<Text color={theme.text} bold>{question}</Text>

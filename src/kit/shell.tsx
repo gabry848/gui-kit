@@ -1,6 +1,6 @@
 import {useContext, useState, type ReactNode} from 'react';
 import {Box, Text, useApp, useWindowSize} from 'ink';
-import {KeyScope, useCommand, useKeymapState, useKeys, useKit} from './context.js';
+import {KeyScope, useCommand, useKeymapState, useKeys, useKit, useMouseBarrier} from './context.js';
 import {prettyKeys, type Binding} from './keymap.js';
 import {theme} from './theme.js';
 
@@ -102,6 +102,7 @@ function Help({onClose}: {onClose: () => void}) {
 		],
 		{modal: true, priority: 1000},
 	);
+	useMouseBarrier(1000);
 	const groups = new Map<string, Binding[]>();
 	for (const binding of bindings) {
 		const group = binding.group ?? 'Altro';
@@ -117,7 +118,7 @@ function Help({onClose}: {onClose: () => void}) {
 							<Text bold color={theme.accent}>{group}</Text>
 							{list.map(binding => (
 								<Box key={binding.keys} gap={2}>
-									<Box width={10}><Text color={theme.warning}>{prettyKeys(binding.keys)}</Text></Box>
+									<Box width={11} flexShrink={0}><Text color={theme.warning}>{prettyKeys(binding.keys)}</Text></Box>
 									<Text color={theme.text}>{binding.desc}</Text>
 								</Box>
 							))}
@@ -128,7 +129,7 @@ function Help({onClose}: {onClose: () => void}) {
 					<Text bold color={theme.accent}>Comandi</Text>
 					{commands.map(command => (
 						<Box key={command.name} gap={2}>
-							<Box width={10}><Text color={theme.warning}>:{command.name}</Text></Box>
+							<Box width={11} flexShrink={0}><Text color={theme.warning}>:{command.name}</Text></Box>
 							<Text color={theme.text}>{command.desc}</Text>
 						</Box>
 					))}
@@ -165,6 +166,7 @@ export function Modal({title, onClose, bindings = [], children}: {title: string;
 	);
 	// Children's keys go above this modal layer, or a Form inside would get none.
 	const scope = useContext(KeyScope);
+	useMouseBarrier(scope + 20);
 	return (
 		<KeyScope.Provider value={scope + 20}>
 			<Overlay title={title}>{children}</Overlay>

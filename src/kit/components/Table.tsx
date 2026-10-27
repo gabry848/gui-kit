@@ -28,19 +28,20 @@ function fit(text: string, width: number, align: 'left' | 'right'): string {
 }
 
 /** Rows and columns with a header; `s` sorts by the next column, `S` flips the order. */
-export function Table<T extends Record<string, unknown>>({columns, rows, onOpen, active = true}: Props<T>) {
+export function Table<T extends object>({columns, rows, onOpen, active = true}: Props<T>) {
 	const [sort, setSort] = useState<{column: number; descending: boolean} | undefined>();
-	// Room for the title plus its sort arrow, or the widest of the first 200 cells.
-	const widths = columns.map(column => column.width ?? Math.max(column.title.length + 2, ...rows.slice(0, 200).map(row => String(row[column.key] ?? '').length)) + 1);
 	const cell = (row: T, column: Column<T>) => {
 		const format = column.format as ((value: unknown, row: T) => string) | undefined;
-		return format ? format(row[column.key], row) : String(row[column.key] ?? '');
+		const value: unknown = row[column.key];
+		return format ? format(value, row) : String(value ?? '');
 	};
+	// Room for the title plus its sort arrow, or the widest of the first 200 cells.
+	const widths = columns.map(column => column.width ?? Math.max(column.title.length + 2, ...rows.slice(0, 200).map(row => cell(row, column).length)) + 1);
 
 	const sorted = sort === undefined ? rows : [...rows].sort((a, b) => {
 		const column = columns[sort.column]!;
-		const x = a[column.key];
-		const y = b[column.key];
+		const x: unknown = a[column.key];
+		const y: unknown = b[column.key];
 		const order = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y));
 		return sort.descending ? -order : order;
 	});

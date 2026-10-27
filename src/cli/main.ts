@@ -19,7 +19,7 @@ const HELP = `gui — app da terminale fatte con gui-kit
   gui ask <app|cartella|file>    avvia e scrive su stdout, in JSON, il valore passato a finish();
                                  esce con 1 se l'utente chiude senza rispondere o l'app va in
                                  errore, con 3 se non c'è un terminale su cui disegnare
-  gui screen <app|cartella|file> [--keys K] [--cols N] [--rows N] [argomenti]
+  gui screen <app|cartella|file> [--keys K] [--cols N] [--rows N] [argomenti] [-- argomenti]
                                  la disegna in un terminale virtuale, preme i tasti K
                                  (notazione Vim: 5j/cerca<CR>) e stampa lo schermo, poi
                                  [finish] <json> o [uscita] se l'app si è chiusa;
@@ -198,7 +198,8 @@ async function check(target: string): Promise<never> {
 	writeFileSync(file, JSON.stringify({...config, files: [resolved.file]}));
 	const proc = Bun.spawn([join(KIT, 'node_modules', '.bin', 'tsc'), '-p', file], {stdio: ['inherit', 'inherit', 'inherit']});
 	const code = await proc.exited;
-	const shown = relative(process.cwd(), resolved.file) || resolved.file;
+	const near = relative(process.cwd(), resolved.file);
+	const shown = near && !near.startsWith('..') ? near : resolved.file;
 	if (code !== 0) process.exit(code);
 	console.log(`${shown}: tipi ok`);
 	// Types say nothing about a missing default export or a crash on first render.
@@ -227,10 +228,15 @@ try {
 			break;
 		}
 		case 'screen': {
-			const keys = option(rest, '--keys') ?? '';
-			const cols = option(rest, '--cols') ?? '100';
-			const rows = option(rest, '--rows') ?? '30';
-			const [target, ...appArgs] = rest;
+			// Everything after `--` goes to the app untouched.
+			const dash = rest.indexOf('--');
+			const own = dash === -1 ? rest : rest.slice(0, dash);
+			const passed = dash === -1 ? [] : rest.slice(dash + 1);
+			const keys = option(own, '--keys') ?? '';
+			const cols = option(own, '--cols') ?? '100';
+			const rows = option(own, '--rows') ?? '30';
+			const [target, ...before] = own;
+			const appArgs = [...before, ...passed];
 			if (!target) fail('gui screen <app|file> [--keys K] [argomenti]');
 			const resolved = resolveTarget(target);
 			process.exit(await child('screen.tsx', [resolved.file, keys, cols, rows], {

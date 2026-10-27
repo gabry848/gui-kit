@@ -35,13 +35,23 @@ const KEY_BYTES: Record<string, string> = {
 	'<Down>': '\u001B[B',
 	'<Right>': '\u001B[C',
 	'<Left>': '\u001B[D',
+	'<S-Tab>': '\u001B[Z',
+	'<Del>': '\u001B[3~',
+	'<Home>': '\u001B[H',
+	'<End>': '\u001B[F',
+	'<PageUp>': '\u001B[5~',
+	'<PageDown>': '\u001B[6~',
 };
 
 function bytesFor(token: string): string {
 	const named = KEY_BYTES[token];
 	if (named) return named;
-	const ctrl = /^<C-(.)>$/.exec(token);
-	if (ctrl) return String.fromCharCode(ctrl[1]!.toLowerCase().charCodeAt(0) - 96);
+	const ctrl = /^<C-([a-z])>$/.exec(token);
+	if (ctrl) return String.fromCharCode(ctrl[1]!.charCodeAt(0) - 96);
+	const meta = /^<M-(.)>$/u.exec(token);
+	if (meta) return '\u001B' + meta[1];
+	// A name it cannot send must not be typed as the characters "<", "E", "n"...
+	if (token.length > 1 && token.startsWith('<')) throw new Error(`gui screen non sa inviare il tasto ${token}`);
 	return token;
 }
 

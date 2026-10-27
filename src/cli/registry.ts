@@ -40,7 +40,9 @@ export type Target = {file: string; name?: string; dir: string};
 export function resolveTarget(arg: string): Target {
 	const apps = loadRegistry();
 	const installed = apps[arg];
-	if (installed && !existsSync(arg)) {
+	// A bare name means the installed app, even if a folder of that name sits
+	// here; write ./name to mean the folder.
+	if (installed && !arg.includes('/')) {
 		return {file: join(installed.path, installed.entry), name: arg, dir: installed.path};
 	}
 	const path = resolve(arg);

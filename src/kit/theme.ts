@@ -3,6 +3,8 @@
 export const theme = {
 	accent: '#7aa2f7',
 	accentText: '#1a1b26',
+	/** The app background, e.g. for a dark Canvas: `rgb(theme.background)`. */
+	background: '#1a1b26',
 	text: '#c0caf5',
 	muted: '#737aa2',
 	border: '#3b4261',

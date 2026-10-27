@@ -43,7 +43,7 @@ export function List<T>({items, render, text, onOpen, active = true, height: fix
 		if (!active) {
 			return;
 		}
-		keymap.onSearch((value, live) => {
+		return keymap.onSearch((value, live) => {
 			setQuery(value);
 			setCursor(0);
 			setOffset(0);
@@ -51,7 +51,6 @@ export function List<T>({items, render, text, onOpen, active = true, height: fix
 				keymap.flash(value ? `Filtro: ${value}` : '');
 			}
 		});
-		return () => keymap.onSearch(undefined);
 	}, [keymap, active]);
 
 	const open = () => {
