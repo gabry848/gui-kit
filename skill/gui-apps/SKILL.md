@@ -1,60 +1,98 @@
 ---
 name: gui-apps
-description: "Creare, avviare e gestire app da terminale fatte con gui-kit (Ink 8 su Bun). Copre le app al volo, che chiedono qualcosa all'utente e restituiscono la risposta in JSON con gui ask, e le app complete salvate e installate per nome (gui <app>). Usare quando l'utente chiede un'interfaccia, un form, una scelta, una tabella o un canvas nel terminale, oppure di aprire, installare o disinstallare una di queste app."
+description: "Create, run and manage terminal apps built with gui-kit (Ink 8 on Bun). Covers one-off apps that ask the user something and return the answer as JSON with gui ask, and complete apps saved and installed by name (gui <app>), with kit versions and sandboxed permissions. Use when the user asks for an interface, a form, a choice, a table, a dashboard, a file browser or a canvas in the terminal, or to open, install or uninstall one of these apps."
 ---
 
-# App da terminale con gui-kit
+# Terminal apps with gui-kit
 
-Ogni app occupa a schermo intero il terminale in cui parte e non gestisce finestre: i terminali li gestisce l'utente in Ghostty, oppure tu con ghostty-mcp. Il kit e la CLI stanno in `~/Documents/AiAgents/lab/gui-kit`. Il comando `gui` è in `~/.local/bin/gui`.
+Every app takes the terminal it starts in full screen and never manages windows: the user manages terminals in Ghostty, or you do with ghostty-mcp. The `gui` command must be on the PATH (`gui --version` prints the kit version; `gui help` lists the commands). To install it: clone the gui-kit repository, run `bun install`, then `ln -s "$PWD/bin/gui" ~/.local/bin/gui`.
 
-## Scegliere il tipo di app
+## Pick the kind of app
 
-- **Al volo:** un solo file `.tsx`, scritto dove serve (per esempio nello scratchpad), senza installare nulla. Serve per chiedere all'utente una scelta, i campi di un form o una conferma.
-- **Salvata:** una cartella con `gui.json` e `app.tsx`, installata col suo nome. Si crea con `gui new <nome>`, oppure da un file al volo con `gui new <nome> --from file.tsx`.
+- **One-off:** a single `.tsx` file and nothing to install. Use it to ask the user for a choice, the fields of a form or a confirmation. `gui scratch [name]` creates one from a template in `~/.local/share/gui/scratch` and prints its path; write the app into that file. A `.tsx` file anywhere else works too.
+- **Saved:** a folder with `gui.json` and `app.tsx`, installed by name. Create it with `gui new <name>`, or keep a one-off file with `gui keep <file> <name>`.
 
-## Comandi
+## Commands
 
-`<app>` può essere il nome di un'app installata, una cartella con `gui.json` o un file `.tsx`. Un nome senza `/` indica sempre l'app installata, anche se nella cartella corrente c'è una cartella omonima: per la cartella scrivi `./nome`.
+`<app>` is the name of an installed app, a folder with `gui.json` or a `.tsx` file. A name without `/` always means the installed app, even when the current folder has a folder of that name: write `./name` for the folder.
 
 ```sh
-gui <nome> [argomenti]             # avvia un'app installata
-gui run <app> [argomenti]          # avvia nel terminale corrente
-gui ask <app> [argomenti]          # stdout: solo il JSON passato a finish()
-gui screen <app> [--keys 'K'] [--cols 100] [--rows 30] [argomenti] [-- argomenti]
-gui check <app>                    # tipi + prova di avvio senza terminale
-gui new <nome> [--dir D] [--from file.tsx] [--description T]
-gui install [cartella] [--bin] | gui uninstall <nome> | gui ls [--json]
+gui <name> [args]                  # start an installed app
+gui run <app> [args]               # start it in the current terminal
+gui ask <app> [args]               # stdout: only the JSON passed to finish()
+gui screen <app> [--keys 'K'] [--cols 100] [--rows 30] [args] [-- args]
+gui check <app>                    # types + a first render, no terminal needed
+gui scratch [name]                 # new one-off file; prints its path
+gui keep <file> <name> [--dir D] [--description T] [--bin] [--yes]
+gui new <name> [--dir D] [--from file.tsx] [--description T]
+gui install [folder] [--bin] [--yes] | gui uninstall <name> | gui ls [--json]
+gui kits                           # saved kit versions and the apps on them
+gui gc [--days N] [--dry-run]      # delete unused one-off files and kit copies
 ```
 
-- **`gui run` e `gui ask` hanno bisogno di un terminale vero.** Dalla tua shell degli strumenti escono con 3 e il messaggio `nessun terminale`. Aprili in una finestra di Ghostty con ghostty-mcp (vedi "Mostrarla all'utente").
-- **`gui ask`** scrive su stdout solo il JSON, quindi `risposta=$(gui ask form.tsx)` funziona come con fzf. Codici d'uscita:
-  - 0 con una riga JSON;
-  - 1 se l'app si chiude senza `finish()` (`q`, `:q`, `Ctrl-C`) o va in errore;
-  - 2 per errori della CLI (app inesistente, nessun export di default);
-  - 3 se non c'è un terminale.
-  Controlla sempre il codice d'uscita, non solo il risultato.
-- **`gui new <nome>`** crea la cartella `./<nome>`; con `--dir D` crea l'app direttamente in `D`, non in `D/<nome>`. Scrive `gui.json`, `app.tsx` e `tsconfig.json` e installa subito l'app. Non sovrascrive mai file esistenti. Il nome usa minuscole, cifre e trattini; i nomi dei sottocomandi (`run`, `ask`, `ls`...) sono rifiutati, così come un nome già installato da un'altra cartella.
-- **`gui install --bin`** crea anche il comando `~/.local/bin/<nome>`; un `gui install` successivo senza `--bin` lo conserva. `gui uninstall` toglie l'app dal registro e quel comando, ma non cancella i file.
-- **Registro:** è in `$GUI_HOME/registry.json`; senza `GUI_HOME` sta in `${XDG_DATA_HOME:-~/.local/share}/gui/registry.json`. Per prove che non devono toccare il registro vero usa `HOME=<tmp> GUI_HOME=<tmp>/gui gui ...`.
+- **`gui run` and `gui ask` need a real terminal.** From your tool shell they exit with 3 and the message `no terminal`. Open them in a Ghostty window with ghostty-mcp (see "Show it to the user").
+- **`gui ask`** writes only the JSON to stdout, so `answer=$(gui ask form.tsx)` works like fzf. Exit codes:
+  - 0 with one JSON line;
+  - 1 if the app closes without `finish()` (`q`, `:q`, `Ctrl-C`) or fails;
+  - 2 for CLI errors (unknown app, no default export, permissions not approved, kit version not available);
+  - 3 if there is no terminal.
+  Always check the exit code, not only the output.
+- **`gui new <name>`** creates `./<name>`; with `--dir D` it creates the app in `D` itself, not in `D/<name>`. It writes `gui.json`, `app.tsx`, `tsconfig.json` and `.gitignore`, and installs the app right away. It never overwrites files. Names use lowercase letters, digits and dashes; subcommand names (`run`, `ask`, `ls`...) are refused, and so is a name already installed from another folder.
+- **`gui keep <file> <name>`** turns a one-off file into a saved app in `./<name>` (or `--dir D`) and installs it. A file from the scratch folder moves into the project; any other file is copied.
+- **`gui install --bin`** also writes the command `~/.local/bin/<name>`; a later `gui install` without `--bin` keeps it. `gui uninstall` removes the app from the registry and that command, but never deletes its files or its data.
+- **One-off files** in the scratch folder are listed by `gui ls`. Running one marks it as used; `gui gc` deletes those unused for 7 days (`--days N`), and kit copies no installed app uses. `--dry-run` only lists them.
+- **Registry and data:** everything lives in `$GUI_HOME`, by default `${XDG_DATA_HOME:-~/.local/share}/gui` (`registry.json`, `kits/`, `scratch/`, `data/`). For tests that must not touch the real registry use `HOME=<tmp> GUI_HOME=<tmp>/gui gui ...`.
 
-## Scrivere un'app
+## gui.json
 
-- Il file esporta di default il componente principale.
-- Importa tutto da `'gui-kit'`:
-  - i componenti della tabella sotto e anche `Overlay`, un riquadro centrato senza tasti;
-  - `theme` e `rgb`;
-  - gli hook `useFinish`, `useKeys`, `useCommand`, `useMouse`, `useKit`, `useKeymapState`;
-  - da Ink: `Box`, `Text`, `Newline`, `Spacer`, `useWindowSize`;
-  - da React: `useState`, `useEffect`, `useLayoutEffect`, `useRef`, `useMemo`, `useCallback`, `useReducer`, `useContext`, `createContext`, `Fragment`.
-- Non importare `ink` direttamente: caricherebbe una seconda copia di Ink che legge il terminale sbagliato, e `gui check` fallisce. Da `react` puoi importare i tipi (`import type {ReactNode} from 'react'`).
-- Avvolgi la schermata in `<Shell title="...">`. Lo Shell dà la barra di stato, la riga `:`, l'aiuto `?`, il menu dei tasti composti e `q` per uscire. `hint` sostituisce il testo a destra della barra (`? aiuto  : comandi  q esci`): se lo usi, ricorda `?` e `q`.
-- Lo Shell mette i figli in colonna. `List`, `Table` e `Canvas` prendono tutto lo spazio rimasto. Se li metti dentro un tuo `Box`, dagli `flexGrow={1}`. Senza, una `List` mostra al massimo 10 righe, oppure quante ne chiedi con `height`.
-- Per restituire un risultato prendi `const finish = useFinish()` nel corpo del componente e chiama `finish(valore)` in un gestore. L'app si chiude subito. Il valore deve essere serializzabile in JSON: usa `null`, non `undefined`.
-- Gli argomenti dopo l'app arrivano in `process.env.GUI_ARGS` (array JSON); leggili con `JSON.parse(process.env.GUI_ARGS ?? '[]')`. La cartella dell'app è in `GUI_APP_DIR`; per un file singolo è la sua cartella. Vale per `gui <nome>`, `run`, `ask` e `screen`.
-- Le funzioni passate a `useKeys`, `useCommand` e ai componenti vedono sempre lo stato attuale, non quello del primo disegno.
-- Da `useKit()` hai:
-  - `caps`: cosa supporta il terminale, per esempio `caps.graphics`;
-  - `keymap.flash('messaggio')`: un messaggio nella barra di stato.
+```json
+{
+	"name": "notes",
+	"description": "Notes for the current project",
+	"entry": "app.tsx",
+	"kit": "^0.1.0",
+	"permissions": {"read": ["$CWD"], "write": ["$CWD/notes"], "run": ["git"], "net": false}
+}
+```
+
+**Kit version.** `"kit"` is a semver range of the gui-kit versions the app works with; `gui new` writes `^` plus the current version.
+- `gui install` copies the current kit to `$GUI_HOME/kits/<version>` and links that copy in the project's `node_modules` (`gui-kit`, `react`, `@types`). The app then runs on that copy, so later kit changes cannot break it. Don't delete or replace those links; `.gitignore` already leaves `node_modules/` out.
+- Reinstalling refreshes the copy of that version, for every app on it.
+- To move an app to a newer incompatible kit: change `"kit"`, update the code, `gui check`, then `gui install` again.
+- A folder that was never installed runs on the newest available kit that matches the range; a single file always runs on the current kit. A range nobody has stops the app with exit 2.
+
+**Permissions.** On macOS a saved app runs inside a sandbox (`sandbox-exec`) built from `"permissions"`; `gui screen` and `gui check` use it too. On other systems the permissions are shown and approved, but not enforced.
+- With `"permissions": {}` (what `gui new` writes) an app can read its own folder, its data folder, the kit and files outside your home; it can write only its data folder, temp folders and the terminal; it cannot use the network or run commands.
+- `read`: paths it may also read inside your home. `write`: paths it may also write (and read). `net`: `false`, `"local"` (localhost only) or `true`. `run`: command names it may run (`git`, `lsof`), or `"*"` for any.
+- Paths may start with `$CWD` (the folder `gui` was started in), `$APP` (the app folder), `$DATA` (its data folder), `$HOME`, `$TMP` or `~`; a relative path is inside the app folder.
+- Programs the app starts stay in its sandbox. List every program a command starts: `bun run build` needs `bun` and whatever the script runs, and `sh` if it goes through a shell. Setuid programs such as `ps` or `sudo` never run in the sandbox.
+- Without a `"permissions"` field the app has full access.
+- The data folder is `$GUI_HOME/data/<name>`, in `process.env.GUI_DATA_DIR`. Keep the app's state there.
+
+**Approval.** `gui install` (and `gui new`, `gui keep`) lists what the app asks for beyond `{}` and needs a yes. In a terminal it asks; from your tool shell it exits with 2 and the list. **Show the list to the user, and only after they agree run the same command with `--yes`.** Never pass `--yes` on your own. Reinstalling with the same or fewer permissions asks nothing. If `gui.json` later asks for more than was approved, the app stops with exit 2 until it is installed again.
+
+When an operation fails with `EPERM` (`operation not permitted`) inside the app, the sandbox blocked it: add the permission and reinstall.
+
+## Writing an app
+
+- The file default-exports its root component.
+- Import everything from `'gui-kit'`:
+  - the components below, plus `Overlay`, a centered box with no keys;
+  - `theme` and `rgb`;
+  - the hooks `useFinish`, `useKeys`, `useCommand`, `useMouse`, `useKit`, `useKeymapState`, `useNotify`, `useProcess`;
+  - images: `Image`, `loadImage`, `decodeImage`, `drawBitmap`, `fitRect`;
+  - from Ink: `Box`, `Text`, `Newline`, `Spacer`, `useWindowSize`;
+  - from React: `useState`, `useEffect`, `useLayoutEffect`, `useRef`, `useMemo`, `useCallback`, `useReducer`, `useContext`, `createContext`, `Fragment`.
+- Don't import `ink` directly: it would load a second copy of Ink that reads the wrong terminal, and `gui check` fails. You may import types from `react` (`import type {ReactNode} from 'react'`).
+- Wrap the screen in `<Shell title="...">`. The Shell gives the status line, the `:` command line, the `?` help, the menu for multi-key sequences, notifications, and `q` to quit. `hint` replaces the text on the right of the status line: if you set it, mention `?` and `q`.
+- The Shell lays its children out in a column. `List`, `Table`, `Tree`, `Pager`, `Split`, `Tabs` and `Canvas` take all the space left. Inside your own `Box`, give that `Box` `flexGrow={1}`; without it a `List` shows at most 10 rows, or as many as `height` asks.
+- To return a result, take `const finish = useFinish()` in the component body and call `finish(value)` in a handler. The app closes at once. The value must be JSON-serializable: use `null`, not `undefined`.
+- The arguments after the app arrive in `process.env.GUI_ARGS` (a JSON array): `JSON.parse(process.env.GUI_ARGS ?? '[]')`. The app folder is in `GUI_APP_DIR` (for a single file, its folder), the data folder in `GUI_DATA_DIR`, and `process.cwd()` is where `gui` was started.
+- Functions passed to `useKeys`, `useCommand` and the components always see the current state, not the state of the first render.
+- From `useKit()`:
+  - `caps`: what the terminal supports, e.g. `caps.graphics`;
+  - `keymap.flash('message')`: a message in the status line.
+- `const notify = useNotify()` then `notify('Saved', {kind: 'success'})`: a toast at the top right. Kinds `info`, `success`, `warning`, `error`; it disappears after 4 s (`timeout` in ms, 0 keeps it), errors stay until dismissed. `Esc` dismisses all toasts.
 
 ```tsx
 import {Form, Shell, useFinish} from 'gui-kit';
@@ -62,11 +100,11 @@ import {Form, Shell, useFinish} from 'gui-kit';
 export default function App() {
 	const finish = useFinish();
 	return (
-		<Shell title="Nuovo cliente">
+		<Shell title="New customer">
 			<Form
 				fields={[
-					{name: 'nome', label: 'Nome', type: 'text', placeholder: 'Mario Rossi'},
-					{name: 'tipo', label: 'Tipo', type: 'select', options: ['privato', 'azienda']},
+					{name: 'name', label: 'Name', type: 'text', placeholder: 'Ada Lovelace'},
+					{name: 'kind', label: 'Kind', type: 'select', options: ['person', 'company']},
 					{name: 'newsletter', label: 'Newsletter', type: 'checkbox'},
 				]}
 				onSubmit={finish}
@@ -76,130 +114,159 @@ export default function App() {
 }
 ```
 
-Due schermate, perché il kit non ha un componente per le schede:
+A larger app: tabs, a file tree next to a preview, and a command whose output streams in.
 
 ```tsx
-const [screen, setScreen] = useState<'lista' | 'grafico'>('lista');
-const toggle = () => setScreen(current => (current === 'lista' ? 'grafico' : 'lista'));
-useKeys([
-	{keys: 'gt', desc: 'Schermata successiva', group: 'Schermate', run: toggle},
-	{keys: 'gT', desc: 'Schermata precedente', group: 'Schermate', run: toggle},
-]);
-// poi: {screen === 'lista' ? <Elenco /> : <Grafico />}
+import {Pager, ProcessView, Shell, Split, Tabs, Tree, useState, type TreeNode} from 'gui-kit';
+
+export default function App() {
+	const [preview, setPreview] = useState('Open a file with Enter.');
+	const nodes: TreeNode[] = [{id: 'src', label: 'src', load: async () => [{id: 'a.ts', label: 'a.ts'}]}];
+	return (
+		<Shell title="Project">
+			<Tabs
+				tabs={[
+					{id: 'files', title: 'Files', content: (
+						<Split panes={[
+							active => <Tree nodes={nodes} active={active} onOpen={node => setPreview(`You opened ${node.label}`)} />,
+							active => <Pager text={preview} active={active} />,
+						]} sizes={[1, 2]} />
+					)},
+					{id: 'test', title: 'Tests', content: <ProcessView argv={['bun', 'test']} />},
+				]}
+			/>
+		</Shell>
+	);
+}
 ```
 
-La schermata nascosta viene smontata: tornandoci, cursore, filtro `/` e ordinamento ripartono da capo. Lo stato da conservare tienilo nel componente che sceglie la schermata.
+A hidden tab is unmounted: coming back to it, cursor, `/` filter and sort start over, and a `ProcessView` in it is killed. Keep state you need in the component that renders the `Tabs`.
 
-## Componenti
+## Components
 
-| Componente | Uso |
+| Component | Use |
 |---|---|
-| `List` | Elenco lungo. Props: `items`, `render(item, selected)`, `text(item)` (il testo per la ricerca), `onOpen`, `active`, `height`. Tasti: `j`/`k` o le frecce, `gg`/`G`, `Ctrl-d`/`Ctrl-u`, Invio apre. `/` filtra mentre scrivi: Invio tiene il filtro, `Esc` lo annulla, `/` seguito da Invio senza testo lo toglie. La rotella scorre; un clic seleziona e un secondo clic sulla riga evidenziata apre. |
-| `Select` | Scegliere un'opzione. Props: `options` (`{label, value, hint?}[]`), `onSelect(value)`, `active`. `hint` compare in grigio accanto all'etichetta, e la ricerca `/` cerca anche lì. Stessi tasti e clic di `List`. |
-| `Table` | Righe e colonne. Props: `columns`, `rows`, `onOpen`, `active`. Ogni colonna è `{key, title, width?, align?: 'left' \| 'right', format?: (valore, riga) => string}`, dove `valore` ha il tipo di quella chiave. Stessi tasti di `List`, più `s` (ordina per la colonna successiva) e `S` (inverte). |
-| `Form` | Campi in colonna; vedi sotto. |
-| `TextInput` | Una riga di testo. Props: `value`, `onChange`, `onSubmit`, `placeholder`, `active`. In modo normale le lettere sono comandi: `i`, `a` o Invio iniziano a scrivere, `cc` svuota e scrive. Mentre scrivi: Invio conferma e chiama `onSubmit`; `Esc` smette senza `onSubmit`; Backspace cancella; `Ctrl-u` svuota; `Ctrl-w` toglie una parola. Tab e frecce non fanno nulla, e si scrive sempre in fondo. |
-| `Confirm` | Domanda sì/no. Props: `question`, `onAnswer(sì)`, `active`. `y` o Invio rispondono sì, `n` o `Esc` no. Finché è visibile prende tutti i tasti e i clic. |
-| `Modal` | Finestra sopra la schermata. Props: `title`, `onClose`, `bindings` (tasti in più, gli stessi oggetti di `useKeys`). `q` ed `Esc` la chiudono. I componenti dentro ricevono tasti e clic, quindi un `Form` o un `Confirm` in un `Modal` funzionano. Finché è aperta non arrivano `:`, `?`, i tuoi comandi `:nome`, né i tasti e i clic della schermata sotto. |
-| `Canvas` | Disegno; vedi "Grafica". |
+| `List` | A long list. Props: `items`, `render(item, selected)`, `text(item)` (the text `/` searches), `onOpen`, `active`, `height`. Keys: `j`/`k` or the arrows, `gg`/`G`, `Ctrl-d`/`Ctrl-u`, Enter opens. `/` filters while you type: Enter keeps the filter, `Esc` cancels it, `/` then Enter with no text removes it. The wheel scrolls; a click selects and a second click on the highlighted row opens it. |
+| `Select` | Pick one option. Props: `options` (`{label, value, hint?}[]`), `onSelect(value)`, `active`. `hint` shows in grey next to the label and `/` searches it too. Same keys and clicks as `List`. |
+| `Table` | Rows and columns. Props: `columns`, `rows`, `onOpen`, `active`. Each column is `{key, title, width?, align?: 'left' \| 'right', format?: (value, row) => string}`, where `value` has that key's type. Same keys as `List`, plus `s` (sort by the next column) and `S` (reverse). |
+| `Tree` | Expandable tree. Props: `nodes` (`{id, label, children?, load?: () => Promise<TreeNode[]>}[]`, `id` unique among siblings), `onOpen(node)`, `active`, `height`. `load` fetches children the first time a node opens (shows `loading…`; a failure closes it again with a message). Keys: `j`/`k` with counts, `l`/Right opens or goes in, `h`/Left closes or goes to the parent, Enter opens a leaf or toggles a branch, `zR` opens every loaded node, `zM` closes all, `gg`/`G`, `/` filters (matches with their parents). Click selects, a second click opens, the wheel scrolls. |
+| `Pager` | Long text (a string or lines). Props: `text`, `active`, `height`, `follow`, `ansi`. Draws only the visible lines, fine with 100k lines. Keys: `j`/`k`, `Ctrl-d`/`Ctrl-u`, `Ctrl-f`/`Ctrl-b`, `gg`/`G`, `/` searches as you type, `n`/`N` next/previous match, `F` follows the end as lines are added. Strips escape codes; `ansi` keeps colors. Long lines are cut, not wrapped. |
+| `Tabs` | Tab bar with one tab's content mounted. Props: `tabs` (`{id, title, content}[]`), `selected` and `onChange(id)` (optional, to control it), `active`. Keys: `gt` next, `gT` previous, `3gt` third tab; a click on a title opens it. |
+| `Split` | Panes side by side (`direction: 'row'`, default) or stacked (`'column'`). Props: `panes` (functions `active => node`, so pass `active` to the component inside), `sizes` (ratios), `direction`, `active`. Keys: `Ctrl-w w` cycles the focus, `Ctrl-w h`/`l` (row) or `k`/`j` (column) move it; a click in a pane focuses it. One level of `Split` only. |
+| `Form` | Fields in a column; see below. |
+| `TextInput` | One line of text. Props: `value`, `onChange`, `onSubmit`, `placeholder`, `active`. In normal mode letters are commands: `i`, `a` or Enter start typing, `cc` clears and types. While typing: Enter confirms and calls `onSubmit`; `Esc` stops without `onSubmit`; Backspace deletes; `Ctrl-u` clears; `Ctrl-w` deletes a word. Tab and the arrows do nothing, and text is always added at the end. |
+| `Confirm` | A yes/no question. Props: `question`, `onAnswer(yes)`, `active`. `y` or Enter answer yes, `n` or `Esc` no. While shown it takes every key and click. |
+| `Modal` | A window over the screen. Props: `title`, `onClose`, `bindings` (extra keys, the same objects as `useKeys`). `q` and `Esc` close it. Components inside get keys and clicks, so a `Form` or a `Confirm` in a `Modal` work. While it is open, `:`, `?`, your `:name` commands and the keys and clicks of the screen below don't arrive. |
+| `ProcessView` | Runs a command and streams its output. Props: `argv`, `cwd`, `env` (added to the environment), `active`, `onExit(code, signal)`. It starts when mounted; the header shows the command, a spinner, then `exit N`; the output is a `Pager` that follows the end. Keys: `r` runs it again, `Ctrl-k` kills it. Unmounting kills it too. |
+| `Spinner`, `ProgressBar` | `<Spinner label="Loading" />`; `<ProgressBar value={0.4} label="Copy" percent />` (`value` from 0 to 1, optional `width`). |
+| `Image` | A PNG or JPEG. Props: `src` (path or `Bitmap`), `fit` (`'contain'`, `'cover'`, `'fill'`), `width`, `height` (cells; with neither it fills its parent), `smooth`. Picks the best output itself; a file that can't be read shows one line with the reason. |
+| `Canvas` | Drawing; see "Graphics". |
+
+**`useProcess()`** for your own views: `const proc = useProcess()` gives `lines`, `running`, `exitCode`, `signal`, `error`, `start(argv, {cwd, env})`, `kill(signal?)`, `clear()`. `start` kills a previous run; the child gets its own process group, so `kill` and unmount also stop what it started. Keeps the last 10,000 lines (`useProcess({maxLines})`). Commands you run must be in `permissions.run`.
 
 **`Form`.**
-- Ogni campo ha `name` e `label`, più il tipo:
+- Every field has `name` and `label`, plus its type:
   - `{type: 'text', placeholder?, default?}`;
   - `{type: 'select', options: string[], default?}`;
   - `{type: 'checkbox', default?}`.
-- Props: `fields`, `onSubmit(valori)`, `submitLabel` (predefinito `Conferma`), `active`. `valori` è un oggetto `{nome: stringa o booleano}`.
-- Il form invia anche con campi vuoti: la validazione tocca all'app.
-- In modo normale:
-  - `j`/`k`, Tab o le frecce cambiano campo;
-  - `h`/`l` cambiano scelta, e dopo l'ultima ricominciano;
-  - `x` o Invio spuntano una casella, passano alla scelta successiva o, sulla riga `Conferma`, inviano;
-  - su un campo di testo Invio inizia a scrivere.
-- Un campo di testo ha anche i comandi di `TextInput`: `i`, `a`, `cc`, e mentre scrivi `Ctrl-u` e `Ctrl-w`.
-- Mentre scrivi, Invio conferma il campo e passa al successivo.
-- `Ctrl-s` invia da qualsiasi campo, anche mentre scrivi.
+- Props: `fields`, `onSubmit(values)`, `submitLabel`, `active`. `values` is an object `{name: string or boolean}`.
+- The form submits with empty fields too: validation is up to the app.
+- In normal mode:
+  - `j`/`k`, Tab or the arrows change field;
+  - `h`/`l` change choice, wrapping around;
+  - `x` or Enter tick a checkbox, move to the next choice or, on the submit row, submit;
+  - on a text field Enter starts typing.
+- A text field also has the `TextInput` commands: `i`, `a`, `cc`, and while typing `Ctrl-u` and `Ctrl-w`.
+- While typing, Enter confirms the field and moves to the next.
+- `Ctrl-s` submits from any field, even while typing.
 
-## Tasti: stile Vim
+## Keys: Vim style
 
-- `:` apre la riga di comando: `:q` esce, `:help` mostra l'aiuto. `?` mostra l'aiuto con tutti i tasti attivi; non scorre, quindi in un terminale basso viene tagliato. `q` esce dall'app, oppure chiude l'aiuto o un `Modal`.
-- `Esc` non esce dall'app. Annulla tasti in sospeso e conteggi, torna al modo normale dall'inserimento o dalla riga di comando, chiude aiuto e `Modal`, e in `Confirm` risponde no.
-- I movimenti li danno i componenti, non lo Shell.
-- **Conteggi.** Un conteggio (`5j`) arriva a `run(count)` di ogni tasto, ma lo usano solo `j`/`k` (di liste, tabelle e form), le frecce di `List`, `Select` e `Table`, e i tuoi tasti che leggono `count`: `5G` va comunque all'ultima riga. Una cifra è un conteggio, a meno che l'app non abbia un tasto che inizia con quella cifra: allora `1` è un tasto, e un conteggio non può più cominciare con `1`. Mentre scrivi o nel filtro `/` le cifre sono testo.
-- **Tasti composti.** Un tasto che è anche l'inizio di un altro (`g` quando esistono `g` e `gt`) scatta dopo 700 ms, oppure subito se arriva un tasto diverso, che poi conta da solo. Un prefisso che da solo non è un comando aspetta il tasto successivo. `Esc` annulla.
-- `Spazio` non fa nulla da solo. Usalo come prefisso per i tasti della tua app (`<Space>1`, `<Space>f`): il menu dei tasti composti li mostra.
-- **Aggiungere tasti:** `useKeys([{keys: 'dd', desc: 'Elimina', group: 'Lista', mode?: 'normal' | 'insert', run: count => ...}], {active, modal, priority, onText})`.
-  - La notazione è quella di Vim (`gg`, `<C-d>`, `<Space>x`), con questi nomi esatti: `<CR>`, `<Esc>`, `<Tab>`, `<S-Tab>`, `<BS>`, `<Del>`, `<Up>`, `<Down>`, `<Left>`, `<Right>`, `<PageUp>`, `<PageDown>`, `<Home>`, `<End>`, `<Space>`, `<C-x>` con la lettera minuscola e `<M-x>`. Un nome diverso (`<Enter>`, `<C-D>`) ferma l'app con l'errore `Tasto sconosciuto`, che `gui check` mostra.
-  - `desc` e `group` sono in italiano e compaiono nell'aiuto; `group: 'hidden'` li nasconde.
-  - Vince la priorità più alta; a parità vince la chiamata a `useKeys` registrata per ultima (non il `group`). I valori: Shell -10, normale 0, `modal: true` 10, aiuto 1000; dentro un `Modal` tutto sale di 20.
-  - Un componente si registra di nuovo quando cambiano i suoi tasti o `active` (il `Form` ogni volta che inizi o smetti di scrivere), quindi a parità di priorità il vincitore cambia durante l'uso. Per i tuoi tasti non usare quelli dei componenti attivi: `j`, `k`, `h`, `l`, `x`, `s`, `S`, `i`, `a`, `cc`, `/` e Invio.
-  - `modal: true` nasconde tutto quello che ha priorità più bassa.
-  - In modo `'insert'` scattano solo tasti singoli con nome (`<C-s>`, `<CR>`, `<Tab>`...). Lettere e cifre finiscono sempre nel testo, e le sequenze non scattano. `<Esc>` in modo `'insert'` non scatta mai, perché torna sempre al modo normale. L'aiuto `?` mostra solo i tasti del modo normale.
-- **Comandi `:nome`:** `useCommand('nome', 'descrizione', argomenti => ...)`. `argomenti` è una stringa (il resto della riga), non un array. Mentre è aperto un `Modal` o un `Confirm`, `:` non arriva.
-- Non ridefinire `:`, `?` e `q` a livello di app; un `Modal` invece li usa per chiudersi.
-- Tieni attivo un solo componente con `j`/`k` alla volta (`List`, `Select`, `Table`, `Form`), usando `active`: si contendono gli stessi tasti, e la ricerca `/` ha un solo destinatario.
+- `:` opens the command line: `:q` quits, `:help` shows the help. `?` shows the help with every active key; it does not scroll, so a short terminal cuts it. `q` quits the app, or closes the help or a `Modal`.
+- `Esc` never quits the app. It cancels pending keys and counts, goes back to normal mode from insert mode or the command line, closes help, toasts and `Modal`s, and in `Confirm` answers no.
+- Movement comes from the components, not from the Shell.
+- **Counts.** A count (`5j`) reaches `run(count)` of every key, but only `j`/`k` (of lists, tables, trees, pagers and forms), the arrows of `List`, `Select` and `Table`, `gt`, and your own keys that read `count` use it: `5G` still goes to the last row. A digit is a count unless the app has a key that starts with that digit: then `1` is a key, and a count can no longer start with `1`. While typing or in the `/` filter, digits are text.
+- **Multi-key sequences.** A key that also starts another one (`g` when both `g` and `gt` exist) fires after 700 ms, or at once when a different key arrives, which then counts on its own. A prefix that is not a command by itself waits for the next key. `Esc` cancels.
+- `Space` does nothing by itself. Use it as a prefix for your app's keys (`<Space>1`, `<Space>f`): the sequence menu shows them.
+- **Adding keys:** `useKeys([{keys: 'dd', desc: 'Delete', group: 'List', mode?: 'normal' | 'insert', run: count => ...}], {active, modal, priority, onText})`.
+  - The notation is Vim's (`gg`, `<C-d>`, `<Space>x`), with exactly these names: `<CR>`, `<Esc>`, `<Tab>`, `<S-Tab>`, `<BS>`, `<Del>`, `<Up>`, `<Down>`, `<Left>`, `<Right>`, `<PageUp>`, `<PageDown>`, `<Home>`, `<End>`, `<Space>`, `<C-x>` with a lowercase letter, and `<M-x>`. Any other name (`<Enter>`, `<C-D>`) stops the app with an unknown-key error, which `gui check` shows.
+  - `desc` and `group` show in the help; `group: 'hidden'` hides them.
+  - The highest priority wins; on a tie the `useKeys` call registered last wins (not the `group`). Values: Shell -10, normal 0, `modal: true` 10, help 1000; inside a `Modal` everything goes up by 20.
+  - A component registers again when its keys or `active` change (the `Form` each time you start or stop typing), so on a tie the winner changes while the app is used. Don't use the keys of active components for your own: `j`, `k`, `h`, `l`, `x`, `s`, `S`, `i`, `a`, `cc`, `/`, `n`, `N`, `F`, `gt`, `gT`, `<C-w>` and Enter.
+  - `modal: true` hides everything with a lower priority.
+  - In `'insert'` mode only single named keys fire (`<C-s>`, `<CR>`, `<Tab>`...). Letters and digits always go into the text, and sequences don't fire. `<Esc>` in `'insert'` mode never fires, because it always goes back to normal mode. The `?` help shows only normal-mode keys.
+- `Ctrl-C` always quits the app (Ink handles it before the kit).
+- **`:name` commands:** `useCommand('name', 'description', args => ...)`. `args` is a string (the rest of the line), not an array. While a `Modal` or a `Confirm` is open, `:` does not arrive.
+- Don't redefine `:`, `?` and `q` at app level; a `Modal` uses them to close.
+- Keep one component with `j`/`k` active at a time (`List`, `Select`, `Table`, `Tree`, `Pager`, `Form`) using `active`, or let `Split` and `Tabs` do it: they compete for the same keys, and `/` has one receiver.
 
-## Stile
+## Style
 
-- Colori solo da `theme`, mai valori fissi. I colori disponibili sono `background`, `text`, `muted`, `accent`, `accentText` (testo su `accent`), `border`, `selection`, `success`, `warning`, `danger`, e `modes.normal`, `modes.insert`, `modes.command`. Per il `Canvas` convertili con `rgb(theme.accent)`.
-- Testi dell'interfaccia in italiano e brevi. In cima a ogni schermata metti una riga che dice cosa si può fare.
-- Niente finestre o pannelli multipli dentro l'app: per una seconda vista usa una schermata o un `Modal`.
+- Colors only from `theme`, never literal values: `background`, `text`, `muted`, `accent`, `accentText` (text on `accent`), `border`, `selection`, `success`, `warning`, `danger`, and `modes.normal`, `modes.insert`, `modes.command`. For a `Canvas`, convert them with `rgb(theme.accent)`.
+- Short interface text, in the user's language. At the top of each screen, one line that says what can be done.
+- For a second view use `Tabs`, a `Modal` or a `Split` with two panes; no windows inside the app.
 
-## Grafica
+## Graphics
+
+**What the terminal can show** is in `caps.graphics`:
+- `'kitty'`: real pixels. Automatic in kitty and in Ghostty 1.4 or later, never inside tmux. Ghostty 1.3.x needs `GUI_GRAPHICS=kitty`.
+- `'sixel'`: only with `GUI_GRAPHICS=sixel` on a terminal that reports sixel and its cell size. Not yet checked in a real terminal.
+- `'none'`: text only. `GUI_GRAPHICS=none` forces it.
+
+`Image` chooses by itself (kitty, sixel, else colored half blocks). For a `Canvas`, pass `backend={caps.graphics === 'none' ? 'braille' : caps.graphics}`; a backend the terminal can't show falls back to braille.
 
 **`Canvas`.**
-- Props obbligatorie:
-  - `backend`: `'braille'`, `'half'` o `'kitty'`;
-  - `version`: un numero da incrementare a ogni cambio della scena;
+- Required props:
+  - `backend`: `'braille'`, `'half'`, `'kitty'` or `'sixel'`;
+  - `version`: a number to increase on every change of the scene;
   - `draw(raster, {sx, sy})`.
-- Si ridisegna solo quando cambiano `version`, la dimensione o `backend`.
-- Prende tutto lo spazio rimasto nel contenitore.
-- Facoltative:
-  - `background`: un colore RGB; il predefinito `[250, 250, 245]` è quasi bianco, quindi per uno sfondo scuro passa `rgb(theme.background)`;
+- It redraws only when `version`, its size or `backend` change.
+- It takes all the space left in its container.
+- Optional:
+  - `background`: an RGB color; the default `[250, 250, 245]` is almost white, so for a dark background pass `rgb(theme.background)`;
   - `onPointer`;
-  - `onFrame(ms, byte)`.
+  - `onFrame(ms, bytes)`.
 
 **`Raster`.**
-- `raster.width` e `raster.height` sono in pixel del raster; `sx` e `sy` sono i pixel per cella: 2×4 col braille, 1×2 con `'half'`, fino a 10×20 con kitty.
-- Metodi:
+- `raster.width` and `raster.height` are in raster pixels; `sx` and `sy` are pixels per cell: 2×4 with braille, 1×2 with `'half'`, up to 10×20 with kitty and sixel.
+- Methods:
   - `plot(x, y, c)`;
   - `dot(cx, cy, r, c)`;
-  - `line`, `rect` ed `ellipse`, con `(x0, y0, x1, y1, spessore, c)`;
+  - `line`, `rect` and `ellipse`, with `(x0, y0, x1, y1, thickness, c)`;
   - `clear()`.
-- `spessore` è il raggio del pennello: con 0 disegna un pixel. `rect` ed `ellipse` disegnano solo il contorno; per riempire un'area disegna linee affiancate.
-- `draw` riceve ogni volta un raster nuovo e già pulito, quindi `clear()` non serve. Il tipo `Raster` si importa da `'gui-kit'`.
-- I colori sono terne `[r, g, b]`.
+- `thickness` is the brush radius: 0 draws one pixel. `rect` and `ellipse` draw only the outline; to fill an area draw lines side by side.
+- `draw` gets a new, cleared raster every time, so `clear()` is not needed. Import the `Raster` type from `'gui-kit'`.
+- Colors are `[r, g, b]` triples.
+- Images in a canvas: `const bitmap = await loadImage(path)` (PNG or JPEG, in a `useEffect`), then in `draw`: `drawBitmap(raster, bitmap, {x, y, width, height, fit: 'contain'})`.
 
 **`onPointer`.**
-- Riceve `{kind: 'down' | 'up' | 'drag' | 'wheel', button, wheel?: 'up' | 'down', x, y}`.
-- `x` e `y` sono in celle dall'angolo del canvas: con il mouse a pixel hanno decimali veri, altrimenti valgono il centro della cella.
-- Nel raster diventano `x * sx`, `y * sy`. `onPointer` non riceve `sx` e `sy`: salvali in un `useRef` dentro `draw` (`scala.current = {sx, sy}`).
-- Mentre è aperto un `Modal` o un `Confirm`, `onPointer` non riceve clic.
+- Receives `{kind: 'down' | 'up' | 'drag' | 'wheel', button, wheel?: 'up' | 'down', x, y}`.
+- `x` and `y` are in cells from the canvas corner: with the pixel mouse they have real decimals, otherwise they are the cell center.
+- In the raster they become `x * sx`, `y * sy`. `onPointer` does not get `sx` and `sy`: keep them in a `useRef` inside `draw` (`scale.current = {sx, sy}`).
+- While a `Modal` or a `Confirm` is open, `onPointer` gets no clicks.
 
-**Resa.**
-- Usa `backend="braille"` (o `'half'`): funziona in ogni terminale, anche in tmux e ssh.
-- I pixel veri (grafica kitty) servono solo se l'utente li vuole: passa `backend={caps.graphics === 'kitty' ? 'kitty' : 'braille'}`. `caps.graphics` vale `'kitty'` solo con `GUI_GRAPHICS=kitty`, un terminale che risponde alla query kitty e fuori da tmux. In tutti gli altri casi il `Canvas` torna da solo al braille.
-- Il kit invia le immagini in PNG e non deve mai usare `o=z`. Ghostty 1.3.1 va in crash su stream zlib a Huffman fisso, e il crash chiude tutte le schede dell'utente (`~/Documents/AiAgents/lab/gui-kit/bench/ghostty-zlib-crash.md`).
-- Le novità grafiche si provano solo in un'istanza separata di Ghostty (`open -na Ghostty.app --args --window-save-state=never`), mai nella Ghostty dell'utente.
+**Safety.** The kit sends kitty images as PNG and must never use `o=z`: Ghostty 1.3.1 crashes on zlib streams with fixed Huffman blocks, and the crash closes every tab of the user (`bench/ghostty-zlib-crash.md` in the gui-kit repository). Try graphics changes only in a separate Ghostty instance (`open -na Ghostty.app --args --window-save-state=never`), never in the user's Ghostty.
 
-## Verificare prima di consegnare
+## Check before delivering
 
-1. **`gui check app.tsx`** deve stampare `tipi ok` e `si avvia e si disegna`. La seconda prova dura circa 100 ms e non preme tasti: non trova gli errori che arrivano dopo o premendo un tasto, né un layout sbagliato. Per quelli serve `gui screen`.
-2. **`gui screen app.tsx --keys '...'`** stampa lo schermo dopo i tasti.
-   - I tasti si scrivono con gli stessi nomi di `useKeys`: `5j`, `/cerca<CR>`, `<Esc>`, `<C-s>`, `<S-Tab>`, `<Space>`. Mentre scrivi in un campo, uno spazio normale è uno spazio. Un nome che non conosce lo fa uscire con 2.
-   - Stampa solo testo, senza colori: una riga selezionata, un segnaposto o un colore non si vedono. Controlla il testo, e se serve aggiungi un segno visibile (un contorno, un `▌`).
-   - Prova i tasti principali, un campo con spazi, `?` e `q`.
-   - Dopo lo schermo stampa `[finish] <json>` se l'app ha chiamato `finish()`, oppure `[uscita]` se si è chiusa senza. In entrambi i casi lo schermo è l'ultimo frame prima dell'uscita e il codice d'uscita è 0, quindi guarda l'output.
-   - Gli argomenti per l'app vanno dopo il nome dell'app; quelli dopo `--` arrivano tali e quali, anche se somigliano alle opzioni di `gui screen`.
-   - Se l'app va in errore, esce con 1 e scrive `[errore]` e lo stack su stderr. Se l'errore è nel disegno, al posto dell'app compare il riquadro d'errore di Ink.
-   - Senza export di default esce con 2.
-3. **Limiti di `gui screen`:**
-   - niente mouse;
-   - aspetta circa 130 ms dopo l'ultimo tasto (200 ms dopo `Esc`): quello che succede dopo non si vede;
-   - non terminare `--keys` con un prefisso, perché scatterebbe solo dopo 700 ms.
-4. **Mostrarla all'utente** con ghostty-mcp:
-   - `open_terminal` con `where: "window"` o `"tab"`;
-   - `send_text` con `gui <nome>`, oppure `gui ask file.tsx > risposta.json; echo "uscita=$?"`;
-   - per pilotarla tu: `send_keys` per i tasti con nome (`esc`, `enter`, `ctrl+s`) e `send_text` con `mode: "type"` e `submit: false` per il testo (senza `submit: false` preme anche Invio);
-   - `read_screen` o `wait_for` per controllare;
-   - alla fine leggi il file e il codice d'uscita.
-5. **Riporta cosa hai verificato e come:** senza terminale, dal vivo, o non verificato.
+1. **`gui check app.tsx`** must print `types ok` and `starts and draws`. The second check lasts about 100 ms and presses no keys: it does not find errors that come later or after a key, nor a wrong layout. For those use `gui screen`.
+2. **`gui screen app.tsx --keys '...'`** prints the screen after the keys.
+   - Keys use the same names as `useKeys`: `5j`, `/find<CR>`, `<Esc>`, `<C-s>`, `<S-Tab>`, `<Space>`. While typing in a field, a plain space is a space. A name it doesn't know makes it exit with 2.
+   - It prints text only, without colors: a selected row, a placeholder or a color don't show. Check the text, and if needed add a visible mark (a border, a `▌`).
+   - Try the main keys, a field with spaces, `?` and `q`.
+   - After the screen it prints `[finish] <json>` if the app called `finish()`, or `[exit]` if it quit without. Either way the screen is the last frame before the exit and the exit code is 0, so read the output.
+   - Arguments for the app go after the app; those after `--` arrive verbatim, even when they look like `gui screen` options.
+   - If the app fails, it exits with 1 and writes `[error]` and the stack to stderr. If the error is in rendering, Ink's error box replaces the app.
+   - Without a default export it exits with 2.
+   - It runs in the app's sandbox, so a missing permission shows up here as `EPERM`.
+3. **Limits of `gui screen`:**
+   - no mouse;
+   - it waits about 130 ms after the last key (200 ms after `Esc`): what happens later doesn't show;
+   - don't end `--keys` with a prefix, because it would fire only after 700 ms.
+4. **Show it to the user** with ghostty-mcp:
+   - `open_terminal` with `where: "window"` or `"tab"`;
+   - `send_text` with `gui <name>`, or `gui ask file.tsx > answer.json; echo "exit=$?"`;
+   - to drive it yourself: `send_keys` for named keys (`esc`, `enter`, `ctrl+s`) and `send_text` with `mode: "type"` and `submit: false` for text (without `submit: false` it presses Enter too);
+   - `read_screen` or `wait_for` to check;
+   - at the end read the file and the exit code.
+5. **Report what you checked and how:** without a terminal, live, or not checked.
