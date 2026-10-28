@@ -1,0 +1,12 @@
+{
+	"name": "workbench",
+	"description": "Dashboard for the folder it starts in: files, git, tasks and ports",
+	"entry": "app.tsx",
+	"kit": "^0.1.0",
+	"permissions": {
+		"read": ["~/.gitconfig", "~/.config/git", "~/.nvm"],
+		"write": ["$CWD"],
+		"run": ["*"],
+		"net": true
+	}
+}
