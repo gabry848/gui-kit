@@ -1,5 +1,7 @@
 // `gui`: run, ask, check and manage terminal apps built with gui-kit.
 
+// First: it moves to the folder gui was started in (see bin/gui).
+import './cwd.js';
 import {chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {homedir, tmpdir} from 'node:os';
@@ -98,8 +100,8 @@ function prepare(target: Target, appArgs: string[]): Prepared {
 		kit = nearestLinkedKit(target.dir) ?? pickKit(undefined);
 	}
 	touchScratch(target.file);
-	// An installed app keeps the data folder of the name you installed it under.
-	const data = manifest ? dataFolder(installed ? target.name! : manifest.name) : undefined;
+	// An installed app keeps the data folder of the name you installed it under; a folder never installed gets its own.
+	const data = manifest ? (installed ? dataFolder(target.name!) : dataFolder(manifest.name, target.dir)) : undefined;
 	if (data) mkdirSync(data, {recursive: true});
 	return {
 		kit,
@@ -116,10 +118,16 @@ function prepare(target: Target, appArgs: string[]): Prepared {
 	};
 }
 
-/** GUI_HOME/data/<name>; the sandbox lets the app read and write it, so it must stay inside GUI_HOME/data. */
-function dataFolder(name: string): string {
-	const root = resolve(GUI_HOME, 'data');
-	const dir = resolve(root, name);
+/**
+ * GUI_HOME/data/<name> for an installed app. A project folder that was never
+ * installed (`devDir`) gets GUI_HOME/data/.dev/<name>-<hash of its resolved
+ * path>: its gui.json may use any name, and the name alone must not hand it the
+ * data of an installed app, or what an uninstalled one left. The sandbox lets
+ * the app read and write the folder, so it must stay inside GUI_HOME/data.
+ */
+function dataFolder(name: string, devDir?: string): string {
+	const root = devDir === undefined ? resolve(GUI_HOME, 'data') : resolve(GUI_HOME, 'data', '.dev');
+	const dir = resolve(root, devDir === undefined ? name : `${name}-${createHash('sha1').update(real(devDir)).digest('hex').slice(0, 12)}`);
 	if (!NAME.test(name) || dirname(dir) !== root) fail(`${name}: not a valid app name, so it gets no data folder`);
 	return dir;
 }
@@ -138,8 +146,10 @@ type Stdio = 'inherit' | 'ignore';
 
 /** Runs one of the kit's child scripts for an app, inside its sandbox. */
 async function child(prepared: Prepared, script: string, args: string[], stdio: [Stdio, Stdio, Stdio] = ['inherit', 'inherit', 'inherit']): Promise<number> {
-	// An app with permissions never gets the .env of the folder it starts in: Bun would load it before the app runs.
-	const bunOptions = prepared.grant === 'full' ? [] : ['--no-env-file'];
+	// No app, full access included, loads the bunfig.toml of the folder it starts in: another app allowed to
+	// write there could have put one with a preload script. An app with permissions never gets the .env of
+	// that folder either: Bun would load it before the app runs.
+	const bunOptions = ['--config=/dev/null', ...(prepared.grant === 'full' ? [] : ['--no-env-file'])];
 	const argv = sandboxed([process.execPath, ...bunOptions, join(prepared.kit.dir, 'src', 'cli', script), ...args], prepared.grant, prepared.places);
 	return Bun.spawn(argv, {env: prepared.env, stdio}).exited;
 }

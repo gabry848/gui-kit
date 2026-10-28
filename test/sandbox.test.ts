@@ -127,7 +127,8 @@ test.skipIf(!darwin || !Bun.which('git'))('run: ["git"] may read ~/.gitconfig an
 test.skipIf(!darwin)('an app writes in HOME and GUI_HOME only where it may, even when both are in a temp folder', async () => {
 	const work = join(home, 'work', 'writes');
 	mkdirSync(work, {recursive: true});
-	const setup = 'const guiHome = dirname(dirname(process.env.GUI_DATA_DIR!));';
+	// The CLI hands its environment, GUI_HOME included, to the app.
+	const setup = 'const guiHome = process.env.GUI_HOME!;';
 	const source = probeApp(setup, `\`home=\${attempt(() => writeFileSync(${JSON.stringify(join(home, 'home-write.txt'))}, 'x'))} registry=\${attempt(() => writeFileSync(join(guiHome, 'registry.json'), '{}'))} data=\${attempt(() => writeFileSync(join(process.env.GUI_DATA_DIR!, 'state.json'), '{}'))} cwd=\${attempt(() => writeFileSync('out.txt', 'x'))} tmp=\${attempt(() => writeFileSync(join(${JSON.stringify(realpathSync(tmpdir()))}, 'gui-sandbox-${process.pid}.txt'), 'x'))}\``);
 	try {
 		// Before, a HOME under /private/var/folders was writable as a whole.
@@ -167,4 +168,71 @@ test.skipIf(!darwin)('bun run works inside the sandbox from a folder deep in HOM
 	));
 	const screen = await cli(['screen', app, '--cols', '160', '--rows', '6'], project);
 	expect(screen.stdout).toContain('script=ok above=EPERM');
+}, 60_000);
+
+test.skipIf(!darwin)('net false and "local" never listen, on TCP or unix sockets; true may', async () => {
+	// Bun.listen reports a denied listen as EPERM (Bun.serve says EADDRINUSE).
+	const listener = (net: string, anyAddress: boolean) => probeApp(`const socket = '/tmp/gui-listen-${process.pid}-' + ${JSON.stringify(net)} + '.sock';
+const listen = (options: object) => attempt(() => { Bun.listen({...options, socket: {data() {}}} as never).stop(true); });
+const loopback = listen({hostname: '127.0.0.1', port: 0});
+// 0.0.0.0 is reachable from your network; only tried where it must fail.
+const any = ${anyAddress} ? listen({hostname: '0.0.0.0', port: 0}) : 'skipped';
+const unix = listen({unix: socket});
+attempt(() => rmSync(socket, {force: true}));`, '`loopback=${loopback} any=${any} unix=${unix}`').replace("import {readdirSync, readFileSync, writeFileSync} from 'node:fs';", "import {readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';");
+	const cases: [{net?: 'local' | true}, boolean, string][] = [
+		[{}, true, 'loopback=EPERM any=EPERM unix=EPERM'],
+		[{net: 'local'}, true, 'loopback=EPERM any=EPERM unix=EPERM'],
+		[{net: true}, false, 'loopback=ok any=skipped unix=ok'],
+	];
+	try {
+		for (const [permissions, anyAddress, expected] of cases) {
+			const net = String(permissions.net ?? 'none');
+			const dir = join(home, 'apps', `listen-${net}`);
+			writeApp(dir, {name: 'listen', entry: 'app.tsx', permissions}, listener(net, anyAddress));
+			const screen = await cli(['screen', dir, '--cols', '120', '--rows', '6']);
+			expect(screen.stderr).toBe('');
+			expect(screen.stdout).toContain(expected);
+		}
+	} finally {
+		for (const net of ['none', 'local', 'true']) rmSync(`/tmp/gui-listen-${process.pid}-${net}.sock`, {force: true});
+	}
+}, 60_000);
+
+test.skipIf(!darwin)('a GUI_HOME outside HOME stays private: an app reads neither the registry nor other apps\' data, only its own data and kit', async () => {
+	const otherGui = join(mkdtempSync(join(tmpdir(), 'gui-sandbox-reads-')), 'gui');
+	const env = {GUI_HOME: otherGui};
+	try {
+		writeApp(join(home, 'apps', 'victim'), {name: 'victim', entry: 'app.tsx', permissions: {}}, probeApp('', "'victim'"));
+		expect((await cli(['install', join(home, 'apps', 'victim')], home, env)).code).toBe(0);
+		mkdirSync(join(otherGui, 'data', 'victim'), {recursive: true});
+		writeFileSync(join(otherGui, 'data', 'victim', 'secret.txt'), 'private');
+		const source = probeApp('const guiHome = process.env.GUI_HOME!;\nconst mine = join(process.env.GUI_DATA_DIR!, \'mine.txt\');',
+			"`registry=${attempt(() => readFileSync(join(guiHome, 'registry.json'), 'utf8').length)} other=${attempt(() => readFileSync(join(guiHome, 'data', 'victim', 'secret.txt'), 'utf8'))} kits=${attempt(() => readdirSync(join(guiHome, 'kits')).length)} own=${attempt(() => { writeFileSync(mine, 'mine'); return readFileSync(mine, 'utf8'); })}`");
+		// Installed, it runs on its kit copy in GUI_HOME/kits; a folder never installed runs on this kit.
+		writeApp(join(home, 'apps', 'peek'), {name: 'peek', entry: 'app.tsx', permissions: {}}, source);
+		expect((await cli(['install', join(home, 'apps', 'peek')], home, env)).code).toBe(0);
+		writeApp(join(home, 'apps', 'peek-dev'), {name: 'peek-dev', entry: 'app.tsx', permissions: {}}, source);
+		for (const target of ['peek', join(home, 'apps', 'peek-dev')]) {
+			const screen = await cli(['screen', target, '--cols', '160', '--rows', '6'], home, env);
+			expect(screen.stderr).toBe('');
+			// Before, both read the registry and secret.txt.
+			expect(screen.stdout).toContain('registry=EPERM other=EPERM kits=EPERM own=mine');
+		}
+	} finally {
+		rmSync(join(otherGui, '..'), {recursive: true, force: true});
+	}
+}, 60_000);
+
+test.skipIf(!darwin)('an app may not create or change the files Bun reads from a start folder, even where it may write', async () => {
+	// A planted tsconfig paths map, bunfig preload or .env would run code in the next program started there.
+	const project = join(home, 'planted');
+	mkdirSync(project, {recursive: true});
+	writeFileSync(join(project, 'tsconfig.json'), '{}\n');
+	const app = join(home, 'apps', 'planter');
+	const targets = ['tsconfig.json', 'jsconfig.json', 'bunfig.toml', '.env', '.env.local', 'notes.json'];
+	writeApp(app, {name: 'planter', entry: 'app.tsx', permissions: {write: ['$CWD']}}, probeApp('',
+		`${JSON.stringify(targets)}.map(name => name + '=' + attempt(() => writeFileSync(join(process.cwd(), name), 'x'))).join(' ')`,
+	));
+	const screen = await cli(['screen', app, '--cols', '200', '--rows', '6'], project);
+	expect(screen.stdout).toContain('tsconfig.json=EPERM jsconfig.json=EPERM bunfig.toml=EPERM .env=EPERM .env.local=EPERM notes.json=ok');
 }, 60_000);

@@ -192,9 +192,9 @@ export function sandboxProfile(grant: Grant, places: Places): string | undefined
 	const literals = (paths: string[]) => [...new Set(paths.map(path => `(literal ${quote(path)})`))].join(' ');
 	// Bun lists the folder it starts in and reads its package.json and tsconfig.json
 	// (jsconfig.json without one); it cannot start when that listing is denied.
-	// The app may list that folder, but not read other files in it. Its bunfig.toml
-	// stays unreadable, which Bun skips quietly, and the parent runs Bun with
-	// --no-env-file, so it never reads a .env there.
+	// The app may list that folder, but not read other files in it. Bun is started
+	// with --config=/dev/null and --no-env-file, so it never loads a bunfig.toml or
+	// a .env there, even when the app may read them ($CWD in read or write).
 	// `bun run` also lists every folder above it (looking for a workspace root)
 	// and stops with CouldntReadCurrentDirectory when one of them is denied, so
 	// the folders between your home and the start folder may be listed too.
@@ -205,6 +205,9 @@ export function sandboxProfile(grant: Grant, places: Places): string | undefined
 		'(allow default)',
 		// Reading inside your home is limited to what the app needs and declares.
 		`(deny file-read-data (subpath ${quote(home)}))`,
+		// So is reading GUI_HOME (the registry, other apps' data) wherever it is; the next line
+		// reopens the app's own data folder and the kit copy it runs on (GUI_HOME/kits/<version>).
+		`(deny file-read-data ${subpaths([places.gui])})`,
 		`(allow file-read-data ${subpaths([places.app, places.kit, places.data, bunHome, ...read, ...write, ...gitConfig])} ${literals(startFolder)})`,
 		'(deny file-write*)',
 		`(allow file-write* (subpath "/dev") ${subpaths(temp)})`,
@@ -214,9 +217,16 @@ export function sandboxProfile(grant: Grant, places: Places): string | undefined
 	// A temp folder inside your home (TMPDIR=~/tmp) stays writable.
 	const reopened = temp.filter(path => isInside(path, home) && path !== home);
 	lines.push(`(allow file-write* ${subpaths([...reopened, places.data, ...write])})`);
-	// No filter: false also blocks unix sockets (ssh-agent, docker.sock) and DNS through mDNSResponder.
+	// Bun reads these from the folder a program starts in, and a tsconfig's paths
+	// or a bunfig preload run code in whatever starts there next, a full-access
+	// app included. No app may create or change them, even where it may write.
+	lines.push('(deny file-write* (regex #"/(tsconfig|jsconfig)\\.json$" #"/bunfig\\.toml$" #"/\\.env(\\.[^/]*)?$"))');
+	// No filter: false blocks every socket, listening ones included (TCP and unix), unix sockets
+	// such as ssh-agent or docker.sock and DNS through mDNSResponder.
 	if (grant.net !== true) {
-		lines.push('(deny network-outbound)');
+		lines.push('(deny network*)');
+		// "local" may connect to this machine, but still not listen: the sandbox cannot tell a listener on
+		// 127.0.0.1 from one on 0.0.0.0, which your network reaches ("localhost" matches both).
 		if (grant.net === 'local') lines.push('(allow network-outbound (remote ip "localhost:*"))');
 	}
 	if (!grant.run?.includes('*')) {

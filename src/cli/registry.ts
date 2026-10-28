@@ -90,10 +90,23 @@ export function resolveTarget(arg: string): Target {
 		return project(apps, path, manifest);
 	}
 	if (existsSync(path)) {
-		// The entry file of a project is that project: the same kit, gui.json and sandbox.
-		const dir = dirname(path);
-		if (entryOf(dir) === real(path)) return project(apps, dir, readManifest(dir)!);
-		return {file: path, dir};
+		// The entry file of a project is that project (the same kit, gui.json, sandbox and data),
+		// wherever its gui.json is above it and however the file is reached, a symlink included.
+		const file = real(path);
+		for (let dir = dirname(file); ; dir = dirname(dir)) {
+			if (entryOf(dir) === file) return project(apps, dir, readManifest(dir)!);
+			if (dirname(dir) === dir) break;
+		}
+		// So is the entry an app was installed with, even when gui.json now names another or sits elsewhere.
+		const name = Object.keys(apps).find(key => typeof apps[key]!.entry === 'string' && real(resolve(apps[key]!.path, apps[key]!.entry)) === file);
+		if (name) {
+			const app = apps[name]!;
+			const manifest = readManifest(app.path);
+			if (!manifest) throw new Error(`${name}: ${app.path} has no gui.json any more; gui uninstall ${name} removes it`);
+			return {file: path, name, dir: app.path, manifest, installed: app};
+		}
+		// Bun imports from where the file really is, so its kit is looked for from there.
+		return {file: path, dir: dirname(file)};
 	}
 	throw new Error(`${arg}: not an installed app, a folder with gui.json or a file. \`gui ls\` lists the apps.`);
 }

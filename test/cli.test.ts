@@ -1,4 +1,5 @@
 import {afterAll, expect, test} from 'bun:test';
+import {createHash} from 'node:crypto';
 import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -369,4 +370,134 @@ export default function App() {
 	const help = (await cli(['help'])).stdout;
 	expect(help).toContain('--wait MS');
 	expect(help).toContain('<Wait>');
+}, 60_000);
+
+test('a bunfig.toml preload planted in the start folder never runs: not in the CLI, not in an app, not in a full-access file', async () => {
+	// What an app with "write": ["$CWD"] can leave behind in the folder it was started in.
+	const planted = join(home, 'planted-bunfig');
+	mkdirSync(planted, {recursive: true});
+	writeFileSync(join(planted, 'bunfig.toml'), 'preload = ["./planted.ts"]\n');
+	writeFileSync(join(planted, 'planted.ts'), "console.error('PLANTED-PRELOAD ran');\n");
+	// The trap is armed: a Bun started there runs it.
+	const probe = join(home, 'probe-bunfig.ts');
+	writeFileSync(probe, "console.log('probe');\n");
+	expect(Bun.spawnSync([process.execPath, '--no-env-file', probe], {cwd: planted, stderr: 'pipe'}).stderr.toString()).toContain('PLANTED-PRELOAD');
+
+	// An app that may read the folder, so its sandbox does not hide the files.
+	writeApp(join(home, 'reader'), {name: 'reader', entry: 'app.tsx', kit: `^${version}`, permissions: {read: ['$CWD']}}, SHOW_ENV);
+	expect((await cli(['install', join(home, 'reader'), '--yes'])).code).toBe(0);
+	const oneOff = join(planted, 'where.tsx');
+	writeFileSync(oneOff, `import {Shell, Text} from 'gui-kit';
+export default function App() {
+	return <Shell title="where"><Text>{'cwd=' + process.cwd() + ' gui_cwd=' + process.env.GUI_CWD + ' pwd=' + process.env.PWD}</Text></Shell>;
+}
+`);
+	for (const args of [['ls'], ['screen', 'reader', '--rows', '6'], ['screen', './where.tsx', '--cols', '250', '--rows', '6'], ['check', 'where.tsx']]) {
+		const run = await cli(args, {}, planted);
+		expect(run.stdout + run.stderr).not.toContain('PLANTED');
+		expect(run.code).toBe(0);
+	}
+	// The app still starts in that folder, with the PWD the shell gives (the kit's folder is nowhere).
+	const where = await cli(['screen', './where.tsx', '--cols', '250', '--rows', '6'], {}, planted);
+	expect(where.stdout).toContain(`cwd=${realpathSync(planted)} gui_cwd=undefined pwd=${realpathSync(planted)}`);
+}, 60_000);
+
+test('a tsconfig.json planted in the start folder cannot take over the imports of the CLI', async () => {
+	// baseUrl and paths in the start folder's tsconfig.json apply to every file Bun loads, node:fs included.
+	const planted = join(home, 'planted-tsconfig');
+	mkdirSync(planted, {recursive: true});
+	writeFileSync(join(planted, 'tsconfig.json'), JSON.stringify({compilerOptions: {baseUrl: '.', paths: {'*': ['./planted.ts']}}}));
+	writeFileSync(join(planted, 'planted.ts'), "console.error('PLANTED-TSCONFIG ran');\nexport {};\n");
+	const probe = join(home, 'probe-tsconfig.ts');
+	writeFileSync(probe, "import {readFileSync} from 'node:fs';\nconsole.log(typeof readFileSync);\n");
+	expect(Bun.spawnSync([process.execPath, '--no-env-file', probe], {cwd: planted, stderr: 'pipe'}).stderr.toString()).toContain('PLANTED-TSCONFIG');
+
+	for (const args of [['ls'], ['kits'], ['--version'], ['uninstall', 'nothing-here']]) {
+		const run = await cli(args, {}, planted);
+		expect(run.stdout + run.stderr).not.toContain('PLANTED');
+		expect(run.code).toBe(args[0] === 'uninstall' ? 2 : 0);
+	}
+	// Paths in arguments still mean that folder.
+	const install = await cli(['install', '.'], {}, planted);
+	expect(install.stderr).toContain(`${realpathSync(planted)}: no gui.json`);
+}, 30_000);
+
+test('an entry file in a subfolder, or reached through a symlink, runs as its project', async () => {
+	const dir = join(home, 'nested');
+	mkdirSync(join(dir, 'src'), {recursive: true});
+	writeFileSync(join(dir, 'gui.json'), JSON.stringify({name: 'nested', entry: 'src/app.tsx', kit: `^${version}`, permissions: {}}));
+	writeFileSync(join(dir, 'src', 'app.tsx'), SHOW_ENV);
+	expect((await cli(['install', dir])).code).toBe(0);
+	const links = join(home, 'links');
+	mkdirSync(links, {recursive: true});
+	symlinkSync(join(dir, 'src', 'app.tsx'), join(links, 'nested.tsx'));
+	const pinnedRuntime = join(guiHome, 'kits', version, 'runtime', 'node_modules');
+	// Before, these ran as single files: full access, no data folder, no approval (and through the link, two Reacts).
+	for (const [file, cwd] of [['src/app.tsx', dir], ['app.tsx', join(dir, 'src')], [join(links, 'nested.tsx'), home]] as const) {
+		const run = await cli(['screen', file, '--cols', '250', '--rows', '6'], {}, cwd);
+		expect(run.code).toBe(0);
+		expect(run.stdout).toContain(pinnedRuntime);
+		expect(run.stdout).toContain(`data=${join(guiHome, 'data', 'nested')}`);
+	}
+	// Another file behind a symlink runs on the kit its real folder links.
+	writeFileSync(join(dir, 'src', 'extra.tsx'), SHOW_ENV);
+	symlinkSync(join(dir, 'src', 'extra.tsx'), join(links, 'extra.tsx'));
+	const extra = await cli(['screen', join(links, 'extra.tsx'), '--cols', '250', '--rows', '6']);
+	expect(extra.code).toBe(0);
+	expect(extra.stdout).toContain(pinnedRuntime);
+	expect(extra.stdout).toContain('data=undefined');
+
+	// The entry the registry keeps counts too, after gui.json moved the entry elsewhere.
+	const moved = join(home, 'moved');
+	writeApp(moved, {name: 'moved', entry: 'app.tsx', kit: `^${version}`, permissions: {}}, SHOW_ENV);
+	expect((await cli(['install', moved])).code).toBe(0);
+	writeFileSync(join(moved, 'main.tsx'), SHOW_ENV);
+	writeFileSync(join(moved, 'gui.json'), JSON.stringify({name: 'moved', entry: 'main.tsx', kit: `^${version}`, permissions: {}}));
+	const old = await cli(['screen', 'app.tsx', '--cols', '250', '--rows', '6'], {}, moved);
+	expect(old.code).toBe(0);
+	expect(old.stdout).toContain(`data=${join(guiHome, 'data', 'moved')}`);
+
+	writeFileSync(join(dir, 'gui.json'), JSON.stringify({name: 'nested', entry: 'src/app.tsx', kit: `^${version}`, permissions: {run: ['*']}}));
+	writeFileSync(join(moved, 'gui.json'), JSON.stringify({name: 'moved', entry: 'main.tsx', kit: `^${version}`, permissions: {net: true}}));
+	for (const [args, cwd] of [[['screen', 'src/app.tsx', '--rows', '6'], dir], [['check', 'src/app.tsx'], dir], [['screen', join(links, 'nested.tsx'), '--rows', '6'], home], [['screen', 'app.tsx', '--rows', '6'], moved]] as const) {
+		const run = await cli([...args], {}, cwd);
+		expect(run.code).toBe(2);
+		expect(run.stderr).toContain('now asks for more');
+	}
+}, 60_000);
+
+test('a folder never installed gets a data folder of its own, even under the name of an installed app', async () => {
+	const secret = join(guiHome, 'data', 'victim', 'secret.txt');
+	const source = `import {readFileSync} from 'node:fs';
+import {Shell, Text} from 'gui-kit';
+const attempt = (action: () => unknown) => { try { return String(action()); } catch (error) { return (error as NodeJS.ErrnoException).code ?? 'failed'; } };
+const secret = attempt(() => readFileSync(${JSON.stringify(secret)}, 'utf8'));
+export default function App() {
+	return <Shell title="data"><Text>{'data=' + process.env.GUI_DATA_DIR + ' secret=' + secret}</Text></Shell>;
+}
+`;
+	const victim = join(home, 'victim');
+	writeApp(victim, {name: 'victim', entry: 'app.tsx', kit: `^${version}`, permissions: {}}, source);
+	expect((await cli(['install', victim])).code).toBe(0);
+	mkdirSync(join(guiHome, 'data', 'victim'), {recursive: true});
+	writeFileSync(secret, 'private');
+	const own = await cli(['screen', 'victim', '--cols', '250', '--rows', '6']);
+	expect(own.stdout).toContain(`data=${join(guiHome, 'data', 'victim')} secret=private`);
+
+	const impostor = join(home, 'impostor');
+	writeApp(impostor, {name: 'victim', entry: 'app.tsx', permissions: {}}, source);
+	symlinkSync(impostor, join(home, 'impostor-link'));
+	const devData = join(guiHome, 'data', '.dev', `victim-${createHash('sha1').update(realpathSync(impostor)).digest('hex').slice(0, 12)}`);
+	const runs = async () => {
+		for (const target of [impostor, join(home, 'impostor-link'), join(impostor, 'app.tsx')]) {
+			const run = await cli(['screen', target, '--cols', '250', '--rows', '6']);
+			expect(run.code).toBe(0);
+			// Before, it got data/victim: the installed app's data, read and write.
+			expect(run.stdout).toContain(`data=${devData} secret=${process.platform === 'darwin' ? 'EPERM' : 'private'}`);
+		}
+	};
+	await runs();
+	// What an uninstalled app leaves in data/<name> is not handed to a folder that takes the name either.
+	expect((await cli(['uninstall', 'victim'])).code).toBe(0);
+	await runs();
 }, 60_000);

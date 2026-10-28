@@ -5,5 +5,12 @@ while [ -L "$self" ]; do
 	target=$(readlink "$self")
 	case $target in /*) self=$target ;; *) self=$(dirname "$self")/$target ;; esac
 done
-# --no-env-file: a .env in the current folder must not reach the CLI, which hands its environment to apps.
-exec bun --no-env-file "$(cd "$(dirname "$self")/.." && pwd)/src/cli/main.ts" "$@"
+kit=$(cd "$(dirname "$self")/.." && pwd)
+# Bun loads files from the folder it starts in, and an app allowed to write there can plant them:
+# a bunfig.toml whose preload runs first, a tsconfig.json whose paths take over imports, a .env.
+# So Bun starts in the kit's folder, never reads a bunfig.toml (--config=/dev/null) or a .env
+# (--no-env-file: the CLI hands its environment to apps), and main.ts moves to your folder,
+# passed in GUI_CWD, once its imports are loaded.
+GUI_CWD=$(pwd) || exit 2
+export GUI_CWD
+exec bun --cwd="$kit" --no-env-file --config=/dev/null "$kit/src/cli/main.ts" "$@"
