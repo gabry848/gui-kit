@@ -27,17 +27,17 @@ export function TextInput({value, onChange, onSubmit, placeholder = '', active =
 
 	useKeys(
 		[
-			{keys: 'i', desc: 'Scrivi nel campo', group: 'Campo', run: () => keymap.setMode('insert')},
-			{keys: 'a', desc: 'Scrivi nel campo', group: 'hidden', run: () => keymap.setMode('insert')},
-			{keys: '<CR>', desc: 'Scrivi nel campo', group: 'hidden', run: () => keymap.setMode('insert')},
-			{keys: 'cc', desc: 'Svuota e scrivi', group: 'Campo', run: () => {
+			{keys: 'i', desc: 'Type in the field', group: 'Field', run: () => keymap.setMode('insert')},
+			{keys: 'a', desc: 'Type in the field', group: 'hidden', run: () => keymap.setMode('insert')},
+			{keys: '<CR>', desc: 'Type in the field', group: 'hidden', run: () => keymap.setMode('insert')},
+			{keys: 'cc', desc: 'Clear and type', group: 'Field', run: () => {
 				change('');
 				keymap.setMode('insert');
 			}},
-			{keys: '<BS>', mode: 'insert', desc: 'Cancella', group: 'hidden', run: () => change([...latest.current].slice(0, -1).join(''))},
-			{keys: '<C-u>', mode: 'insert', desc: 'Svuota la riga', group: 'hidden', run: () => change('')},
-			{keys: '<C-w>', mode: 'insert', desc: 'Cancella parola', group: 'hidden', run: () => change(latest.current.replace(/\S*\s*$/, ''))},
-			{keys: '<CR>', mode: 'insert', desc: 'Conferma il campo', group: 'hidden', run: () => {
+			{keys: '<BS>', mode: 'insert', desc: 'Delete a character', group: 'hidden', run: () => change([...latest.current].slice(0, -1).join(''))},
+			{keys: '<C-u>', mode: 'insert', desc: 'Clear the line', group: 'hidden', run: () => change('')},
+			{keys: '<C-w>', mode: 'insert', desc: 'Delete a word', group: 'hidden', run: () => change(latest.current.replace(/\S*\s*$/, ''))},
+			{keys: '<CR>', mode: 'insert', desc: 'Confirm the field', group: 'hidden', run: () => {
 				keymap.setMode('normal');
 				onSubmit?.(latest.current);
 			}},

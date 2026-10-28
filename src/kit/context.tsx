@@ -50,8 +50,8 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 	const barriers = useRef(new Set<{level: number}>());
 	const [overlay, setOverlay] = useState<string | undefined>();
 
-	useEffect(() => keymap.command('q', 'Chiudi l\'app', () => exit()), [keymap, exit]);
-	useEffect(() => keymap.command('quit', 'Chiudi l\'app', () => exit()), [keymap, exit]);
+	useEffect(() => keymap.command('q', 'Quit the app', () => exit()), [keymap, exit]);
+	useEffect(() => keymap.command('quit', 'Quit the app', () => exit()), [keymap, exit]);
 
 	useEffect(() => {
 		const onMouse = (report: string) => {

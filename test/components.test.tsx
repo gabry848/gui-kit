@@ -8,7 +8,7 @@ function FormApp() {
 		<Shell title="Form">
 			<Form
 				fields={[
-					{name: 'nome', label: 'Nome', type: 'text'},
+					{name: 'name', label: 'Name', type: 'text'},
 					{name: 'stack', label: 'Stack', type: 'select', options: ['bun', 'python', 'go']},
 					{name: 'git', label: 'Git', type: 'checkbox'},
 				]}
@@ -22,15 +22,15 @@ test('form: type in insert mode, cycle a choice, tick a box, submit', async () =
 	const app = await headless(<FormApp />, {cols: 80, rows: 12});
 	await app.press('i');
 	expect(app.screen()).toContain('INSERT');
-	await app.type('fatture 2026');
+	await app.type('invoices 2026');
 	await app.press('<BS><Esc>');
-	expect(app.screen()).toContain('fatture 202');
+	expect(app.screen()).toContain('invoices 202');
 	await app.press('jll');
 	expect(app.screen()).toContain('‹ go ›');
 	await app.press('j<CR>');
 	expect(app.screen()).toContain('[x]');
 	await app.press('j<CR>');
-	expect(app.result()).toEqual({value: {nome: 'fatture 202', stack: 'go', git: true}});
+	expect(app.result()).toEqual({value: {name: 'invoices 202', stack: 'go', git: true}});
 	await app.exit();
 });
 
@@ -40,59 +40,59 @@ test('form: Enter in insert mode leaves the field and moves on, Ctrl-s submits',
 	expect(app.screen()).toContain('NORMAL');
 	expect(app.screen()).toMatch(/› Stack/);
 	await app.press('<C-s>');
-	expect(app.result()).toEqual({value: {nome: 'abc', stack: 'bun', git: false}});
+	expect(app.result()).toEqual({value: {name: 'abc', stack: 'bun', git: false}});
 	await app.exit();
 });
 
 function SelectApp() {
 	const finish = useFinish();
 	return (
-		<Shell title="Scegli">
-			<Select options={[{label: 'Uno', value: 1}, {label: 'Due', value: 2, hint: 'il secondo'}, {label: 'Tre', value: 3}]} onSelect={finish} />
+		<Shell title="Choose">
+			<Select options={[{label: 'One', value: 1}, {label: 'Two', value: 2, hint: 'the second'}, {label: 'Three', value: 3}]} onSelect={finish} />
 		</Shell>
 	);
 }
 
 test('select: filter with / then choose with Enter', async () => {
 	const app = await headless(<SelectApp />, {cols: 60, rows: 10});
-	expect(app.screen()).toContain('il secondo');
-	await app.press('/tr<CR>');
-	expect(app.screen()).not.toContain('Due');
+	expect(app.screen()).toContain('the second');
+	await app.press('/thr<CR>');
+	expect(app.screen()).not.toContain('Two');
 	await app.press('<CR>');
 	expect(app.result()).toEqual({value: 3});
 	await app.exit();
 });
 
-type Row = {nome: string; mb: number};
+type Row = {name: string; mb: number};
 
 function TableApp() {
 	const finish = useFinish();
-	const rows: Row[] = [{nome: 'beta', mb: 3}, {nome: 'alfa', mb: 10}, {nome: 'gamma', mb: 1}];
+	const rows: Row[] = [{name: 'beta', mb: 3}, {name: 'alpha', mb: 10}, {name: 'gamma', mb: 1}];
 	return (
-		<Shell title="Tabella">
-			<Table<Row> columns={[{key: 'nome', title: 'Nome'}, {key: 'mb', title: 'MB', align: 'right'}]} rows={rows} onOpen={finish} />
+		<Shell title="Table">
+			<Table<Row> columns={[{key: 'name', title: 'Name'}, {key: 'mb', title: 'MB', align: 'right'}]} rows={rows} onOpen={finish} />
 		</Shell>
 	);
 }
 
 test('table: header, sort by column, open a row', async () => {
 	const app = await headless(<TableApp />, {cols: 60, rows: 10});
-	expect(app.lines()[0]).toContain('Nome');
+	expect(app.lines()[0]).toContain('Name');
 	await app.press('s');
-	expect(app.lines()[0]).toContain('Nome ↑');
-	expect(app.lines()[1]).toContain('alfa');
+	expect(app.lines()[0]).toContain('Name ↑');
+	expect(app.lines()[1]).toContain('alpha');
 	await app.press('sS');
 	expect(app.lines()[0]).toContain('MB ↓');
 	await app.press('<CR>');
-	expect(app.result()).toEqual({value: {nome: 'alfa', mb: 10}});
+	expect(app.result()).toEqual({value: {name: 'alpha', mb: 10}});
 	await app.exit();
 });
 
 function ConfirmApp() {
 	const finish = useFinish();
 	return (
-		<Shell title="Conferma">
-			<Confirm question="Procedo?" onAnswer={finish} />
+		<Shell title="Confirm">
+			<Confirm question="Proceed?" onAnswer={finish} />
 		</Shell>
 	);
 }
@@ -110,21 +110,21 @@ test('form: keys sent in one chunk act on fresh state', async () => {
 	await app.type('iabc\rlljx');
 	await app.settle(60);
 	await app.press('<C-s>');
-	expect(app.result()).toEqual({value: {nome: 'abc', stack: 'go', git: true}});
+	expect(app.result()).toEqual({value: {name: 'abc', stack: 'go', git: true}});
 	await app.exit();
 });
 
 test('form: Space types a space, Tab and arrows type nothing, Ctrl-s submits while typing', async () => {
 	const app = await headless(<FormApp />, {cols: 80, rows: 12});
-	await app.press('iMario<Space>Rossi<Tab><Left><C-s>');
-	expect(app.result()).toEqual({value: {nome: 'Mario Rossi', stack: 'bun', git: false}});
+	await app.press('iJane<Space>Doe<Tab><Left><C-s>');
+	expect(app.result()).toEqual({value: {name: 'Jane Doe', stack: 'bun', git: false}});
 	await app.exit();
 });
 
 test('after finish the last frame matches the submitted values', async () => {
 	const app = await headless(<FormApp />, {cols: 80, rows: 12});
 	await app.press('jlj<CR><C-s>');
-	expect(app.result()).toEqual({value: {nome: '', stack: 'python', git: true}});
+	expect(app.result()).toEqual({value: {name: '', stack: 'python', git: true}});
 	expect(app.screen()).toContain('‹ python ›');
 	expect(app.screen()).toContain('[x]');
 	await app.exit();
@@ -135,16 +135,16 @@ test('q exits and keeps the last frame; a render error is reported', async () =>
 	await app.press('q');
 	expect(app.exited()).toBe(true);
 	expect(app.result()).toBeUndefined();
-	expect(app.screen()).toContain('Conferma');
+	expect(app.screen()).toContain('Submit');
 	await app.exit();
 
 	function Broken(): never {
-		throw new Error('rotto');
+		throw new Error('broken');
 	}
 	const broken = await headless(<Shell title="x"><Broken /></Shell>, {cols: 60, rows: 8});
 	await broken.settle(60);
 	expect(broken.exited()).toBe(true);
-	expect(String(broken.error())).toContain('rotto');
+	expect(String(broken.error())).toContain('broken');
 	await broken.exit();
 });
 
@@ -169,24 +169,24 @@ test('a Form and a Confirm inside a Modal get their keys', async () => {
 		const [name, setName] = useState('');
 		return (
 			<Shell title="m">
-				<Modal title="Nuova nota" onClose={() => finish('chiuso')}>
+				<Modal title="New note" onClose={() => finish('closed')}>
 					{step === 'form' ? (
-						<Form fields={[{name: 'titolo', label: 'Titolo', type: 'text'}]} onSubmit={values => {
-							setName(String(values['titolo']));
+						<Form fields={[{name: 'title', label: 'Title', type: 'text'}]} onSubmit={values => {
+							setName(String(values['title']));
 							setStep('confirm');
 						}} />
 					) : (
-						<Confirm question="Salvo?" onAnswer={yes => finish(yes ? name : null)} />
+						<Confirm question="Save?" onAnswer={yes => finish(yes ? name : null)} />
 					)}
 				</Modal>
 			</Shell>
 		);
 	}
 	const app = await headless(<ModalForm />, {cols: 70, rows: 14});
-	await app.press('iSpesa<Space>sabato<C-s>');
-	expect(app.screen()).toContain('Salvo?');
+	await app.press('iGroceries<Space>Saturday<C-s>');
+	expect(app.screen()).toContain('Save?');
 	await app.press('y');
-	expect(app.result()).toEqual({value: 'Spesa sabato'});
+	expect(app.result()).toEqual({value: 'Groceries Saturday'});
 	await app.exit();
 });
 
@@ -202,7 +202,7 @@ test('help keeps its keys while the app redraws on its own', async () => {
 	const app = await headless(<Ticking />, {cols: 80, rows: 24});
 	await app.press('?');
 	await app.settle(80);
-	expect(app.screen()).toContain('Mezza pagina giù');
+	expect(app.screen()).toContain('Half page down');
 	await app.exit();
 });
 
@@ -211,21 +211,21 @@ test('a list in a box sized by its content shows its rows', async () => {
 		return (
 			<Shell title="b">
 				<Box flexDirection="column">
-					<Text>sopra</Text>
-					<List items={['uno', 'due', 'tre']} text={item => item} render={item => <Text>{item}</Text>} />
+					<Text>above</Text>
+					<List items={['one', 'two', 'three']} text={item => item} render={item => <Text>{item}</Text>} />
 				</Box>
 			</Shell>
 		);
 	}
 	const app = await headless(<Boxed />, {cols: 40, rows: 10});
-	expect(app.screen()).toContain('tre');
+	expect(app.screen()).toContain('three');
 	await app.exit();
 });
 
 test('chunks: Ctrl keys inside text act as keys, text starting with < stays text', async () => {
 	const app = await headless(<FormApp />, {cols: 80, rows: 12});
 	await app.type('i<b>Anna\u0013');
-	expect(app.result()).toEqual({value: {nome: '<b>Anna', stack: 'bun', git: false}});
+	expect(app.result()).toEqual({value: {name: '<b>Anna', stack: 'bun', git: false}});
 	await app.exit();
 });
 
@@ -233,7 +233,7 @@ test('digit keys, an unfinished sequence, and a throwing handler', async () => {
 	const log: string[] = [];
 	function Keys() {
 		useKeys([
-			{keys: '1', desc: 'Uno', run: () => log.push('1')},
+			{keys: '1', desc: 'One', run: () => log.push('1')},
 			{keys: 'g', desc: 'G', run: () => log.push('g')},
 			{keys: 'gt', desc: 'Gt', run: () => log.push('gt')},
 			{keys: 'x', desc: 'X', run: () => log.push('x')},
@@ -241,7 +241,7 @@ test('digit keys, an unfinished sequence, and a throwing handler', async () => {
 				throw new Error('boom');
 			}},
 		]);
-		return <Shell title="k"><Text>tasti</Text></Shell>;
+		return <Shell title="k"><Text>keys</Text></Shell>;
 	}
 	const app = await headless(<Keys />, {cols: 60, rows: 6});
 	await app.press('1gxgt');
@@ -263,10 +263,10 @@ test('clicks stop at an open Modal, and / goes back to the list after it closes'
 		const [open, setOpen] = useState(true);
 		return (
 			<Shell title="m">
-				<List items={['alfa', 'beta', 'gamma', 'delta']} text={item => item} onOpen={item => opened.push(item)} render={item => <Text>{item}</Text>} />
+				<List items={['alpha', 'beta', 'gamma', 'delta']} text={item => item} onOpen={item => opened.push(item)} render={item => <Text>{item}</Text>} />
 				{open ? (
-					<Modal title="Scegli" onClose={() => setOpen(false)}>
-						<Select options={[{label: 'uno', value: 1}, {label: 'due', value: 2}]} onSelect={() => setOpen(false)} />
+					<Modal title="Choose" onClose={() => setOpen(false)}>
+						<Select options={[{label: 'one', value: 1}, {label: 'two', value: 2}]} onSelect={() => setOpen(false)} />
 					</Modal>
 				) : null}
 			</Shell>
@@ -277,10 +277,10 @@ test('clicks stop at an open Modal, and / goes back to the list after it closes'
 	await app.mouse('down', 2, 0);
 	expect(opened).toEqual([]);
 	await app.press('<CR>');
-	expect(app.screen()).not.toContain('Scegli');
+	expect(app.screen()).not.toContain('Choose');
 	await app.press('/gam<CR>');
 	expect(app.screen()).toContain('gamma');
-	expect(app.screen()).not.toContain('alfa');
+	expect(app.screen()).not.toContain('alpha');
 	await app.exit();
 });
 
@@ -291,22 +291,22 @@ test('a misspelled key name stops the app with a clear error', async () => {
 	}
 	const app = await headless(<Wrong />, {cols: 60, rows: 6});
 	await app.settle(40);
-	expect(String(app.error())).toContain('Tasto sconosciuto <Enter>');
+	expect(String(app.error())).toContain('Unknown key <Enter>');
 	await app.exit();
 });
 
 test('table rows may be declared with an interface; named keys reach bindings', async () => {
-	interface Riga {nome: string; prezzo: number}
+	interface Product {name: string; price: number}
 	const log: string[] = [];
 	function Shop() {
 		useKeys([{keys: '<S-Tab>', desc: 's', run: () => log.push('stab')}, {keys: '<Home>', desc: 'h', run: () => log.push('home')}]);
-		const rows: Riga[] = [{nome: 'pane', prezzo: 1.5}];
-		return <Shell title="t"><Table<Riga> columns={[{key: 'nome', title: 'Nome'}, {key: 'prezzo', title: 'Prezzo', align: 'right', format: value => value.toFixed(2)}]} rows={rows} /></Shell>;
+		const rows: Product[] = [{name: 'bread', price: 1.5}];
+		return <Shell title="t"><Table<Product> columns={[{key: 'name', title: 'Name'}, {key: 'price', title: 'Price', align: 'right', format: value => value.toFixed(2)}]} rows={rows} /></Shell>;
 	}
 	const app = await headless(<Shop />, {cols: 60, rows: 6});
 	expect(app.screen()).toContain('1.50');
 	await app.press('<S-Tab><Home>');
 	expect(log).toEqual(['stab', 'home']);
-	await expect(app.press('<Enter>')).rejects.toThrow('non sa inviare');
+	await expect(app.press('<Enter>')).rejects.toThrow('cannot send');
 	await app.exit();
 });

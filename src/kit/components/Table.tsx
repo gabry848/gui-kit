@@ -48,8 +48,8 @@ export function Table<T extends object>({columns, rows, onOpen, active = true}: 
 
 	useKeys(
 		[
-			{keys: 's', desc: 'Ordina per la colonna successiva', group: 'Tabella', run: () => setSort(current => ({column: current === undefined ? 0 : (current.column + 1) % columns.length, descending: false}))},
-			{keys: 'S', desc: 'Inverti l\'ordine', group: 'Tabella', run: () => setSort(current => ({column: current?.column ?? 0, descending: !current?.descending}))},
+			{keys: 's', desc: 'Sort by the next column', group: 'Table', run: () => setSort(current => ({column: current === undefined ? 0 : (current.column + 1) % columns.length, descending: false}))},
+			{keys: 'S', desc: 'Reverse the order', group: 'Table', run: () => setSort(current => ({column: current?.column ?? 0, descending: !current?.descending}))},
 		],
 		{active},
 	);

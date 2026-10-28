@@ -33,7 +33,7 @@ function initial(fields: Field[]): FormValues {
  * A vertical form. j/k or Tab move between fields; Enter edits text, cycles
  * a choice or ticks a box; h/l cycle choices; Ctrl-s or the last row submits.
  */
-export function Form({fields, onSubmit, submitLabel = 'Conferma', active = true}: Props) {
+export function Form({fields, onSubmit, submitLabel = 'Submit', active = true}: Props) {
 	const [values, setValues] = useState(() => initial(fields));
 	const [row, setRow] = useState(0);
 	const {mode} = useKeymapState();
@@ -57,25 +57,25 @@ export function Form({fields, onSubmit, submitLabel = 'Conferma', active = true}
 	const editingText = field?.type === 'text';
 	useKeys(
 		[
-			{keys: 'j', desc: 'Campo successivo', group: 'Form', run: count => move(count)},
-			{keys: 'k', desc: 'Campo precedente', group: 'Form', run: count => move(-count)},
-			{keys: '<Tab>', desc: 'Campo successivo', group: 'hidden', run: () => move(1)},
-			{keys: '<S-Tab>', desc: 'Campo precedente', group: 'hidden', run: () => move(-1)},
-			{keys: '<Down>', desc: 'Campo successivo', group: 'hidden', run: () => move(1)},
-			{keys: '<Up>', desc: 'Campo precedente', group: 'hidden', run: () => move(-1)},
-			{keys: 'h', desc: 'Scelta precedente', group: 'Form', run: () => cycle(-1)},
-			{keys: 'l', desc: 'Scelta successiva', group: 'Form', run: () => cycle(1)},
-			{keys: 'x', desc: 'Spunta o togli', group: 'Form', run: activate},
-			{keys: '<C-s>', desc: 'Invia il form', group: 'Form', run: () => onSubmit(values)},
+			{keys: 'j', desc: 'Next field', group: 'Form', run: count => move(count)},
+			{keys: 'k', desc: 'Previous field', group: 'Form', run: count => move(-count)},
+			{keys: '<Tab>', desc: 'Next field', group: 'hidden', run: () => move(1)},
+			{keys: '<S-Tab>', desc: 'Previous field', group: 'hidden', run: () => move(-1)},
+			{keys: '<Down>', desc: 'Next field', group: 'hidden', run: () => move(1)},
+			{keys: '<Up>', desc: 'Previous field', group: 'hidden', run: () => move(-1)},
+			{keys: 'h', desc: 'Previous choice', group: 'Form', run: () => cycle(-1)},
+			{keys: 'l', desc: 'Next choice', group: 'Form', run: () => cycle(1)},
+			{keys: 'x', desc: 'Tick or untick', group: 'Form', run: activate},
+			{keys: '<C-s>', desc: 'Submit the form', group: 'Form', run: () => onSubmit(values)},
 			// Text fields own Enter; every other row uses it here.
-			...(editingText ? [] : [{keys: '<CR>', desc: 'Attiva il campo', group: 'Form', run: activate}]),
+			...(editingText ? [] : [{keys: '<CR>', desc: 'Activate the field', group: 'Form', run: activate}]),
 		],
 		{active: active && mode !== 'insert'},
 	);
 	// Ctrl-s also submits while typing in a field.
 	const keymap = useKit().keymap;
 	useKeys(
-		[{keys: '<C-s>', mode: 'insert', desc: 'Invia il form', group: 'hidden', run: () => {
+		[{keys: '<C-s>', mode: 'insert', desc: 'Submit the form', group: 'hidden', run: () => {
 			keymap.setMode('normal');
 			onSubmit(values);
 		}}],
@@ -127,7 +127,7 @@ export function Form({fields, onSubmit, submitLabel = 'Conferma', active = true}
 			}} height={1}>
 				<Text color={row === last ? theme.accent : theme.muted}>{row === last ? '› ' : '  '}</Text>
 				<Text {...(row === last ? {backgroundColor: theme.accent, color: theme.accentText} : {color: theme.text})} bold>{` ${submitLabel} `}</Text>
-				<Text color={theme.muted}>   Ctrl-s invia da qualsiasi campo</Text>
+				<Text color={theme.muted}>   Ctrl-s submits from any field</Text>
 			</Box>
 		</Box>
 	);

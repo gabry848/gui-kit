@@ -13,9 +13,9 @@ type Props = {
 export function Confirm({question, onAnswer, active = true}: Props) {
 	useKeys(
 		[
-			{keys: 'y', desc: 'Sì', group: 'Domanda', run: () => onAnswer(true)},
-			{keys: '<CR>', desc: 'Sì', group: 'hidden', run: () => onAnswer(true)},
-			{keys: 'n', desc: 'No', group: 'Domanda', run: () => onAnswer(false)},
+			{keys: 'y', desc: 'Yes', group: 'Question', run: () => onAnswer(true)},
+			{keys: '<CR>', desc: 'Yes', group: 'hidden', run: () => onAnswer(true)},
+			{keys: 'n', desc: 'No', group: 'Question', run: () => onAnswer(false)},
 			{keys: '<Esc>', desc: 'No', group: 'hidden', run: () => onAnswer(false)},
 		],
 		{active, modal: true},
@@ -25,7 +25,7 @@ export function Confirm({question, onAnswer, active = true}: Props) {
 	return (
 		<Box gap={2}>
 			<Text color={theme.text} bold>{question}</Text>
-			<Text color={theme.success}>[y] sì</Text>
+			<Text color={theme.success}>[y] yes</Text>
 			<Text color={theme.danger}>[n] no</Text>
 		</Box>
 	);

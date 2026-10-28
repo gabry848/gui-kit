@@ -49,7 +49,7 @@ export function checkKeys(keys: string) {
 	for (const token of tokenize(keys)) {
 		if (!token.startsWith('<') || token.length === 1) continue;
 		if (KEY_NAMES.has(token) || /^<C-[a-z]>$/.test(token) || /^<M-.>$/u.test(token)) continue;
-		throw new Error(`Tasto sconosciuto ${token} in "${keys}": usa ${[...KEY_NAMES].join(' ')}, <C-x> con la lettera minuscola o <M-x>`);
+		throw new Error(`Unknown key ${token} in "${keys}": use ${[...KEY_NAMES].join(' ')}, <C-x> with a lowercase letter, or <M-x>`);
 	}
 }
 
@@ -240,7 +240,7 @@ export class Keymap {
 				this.feedNormal(token);
 				return;
 			}
-			this.set({pending: [], count: 0, next: [], message: token === '<Esc>' ? '' : `Nessun comando: ${sequence.join('')}`});
+			this.set({pending: [], count: 0, next: [], message: token === '<Esc>' ? '' : `No command: ${sequence.join('')}`});
 			return;
 		}
 		this.set({pending: sequence, next: longer, message: ''});
@@ -302,7 +302,7 @@ export class Keymap {
 		}
 		const command = this.commands.get(name);
 		if (!command) {
-			this.flash(`Comando sconosciuto: ${name}`);
+			this.flash(`Unknown command: ${name}`);
 			return;
 		}
 		command.run(rest.join(' '));

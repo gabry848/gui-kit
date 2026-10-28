@@ -2,15 +2,15 @@
 import {Select, Shell, useFinish} from 'gui-kit';
 
 const OPTIONS = [
-	{label: 'Ghostty', value: 'ghostty', hint: 'il terminale di tutti i giorni'},
-	{label: 'tmux', value: 'tmux', hint: 'sessioni staccate'},
-	{label: 'ssh', value: 'ssh', hint: 'su un altro computer'},
+	{label: 'Ghostty', value: 'ghostty', hint: 'the everyday terminal'},
+	{label: 'tmux', value: 'tmux', hint: 'detached sessions'},
+	{label: 'ssh', value: 'ssh', hint: 'on another computer'},
 ];
 
 export default function App() {
 	const finish = useFinish();
 	return (
-		<Shell title="Dove lo apro?">
+		<Shell title="Where should I open it?">
 			<Select options={OPTIONS} onSelect={finish} />
 		</Shell>
 	);

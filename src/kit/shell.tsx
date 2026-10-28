@@ -5,7 +5,7 @@ import {prettyKeys, type Binding} from './keymap.js';
 import {useToasts} from './notify.js';
 import {theme} from './theme.js';
 
-const MODE_LABEL = {normal: 'NORMAL', insert: 'INSERT', command: 'COMANDO'} as const;
+const MODE_LABEL = {normal: 'NORMAL', insert: 'INSERT', command: 'COMMAND'} as const;
 
 /** Full-screen frame of every app: content, status line, popups. */
 export function Shell({title, hint, children}: {title: string; hint?: string; children: ReactNode}) {
@@ -15,13 +15,13 @@ export function Shell({title, hint, children}: {title: string; hint?: string; ch
 
 	useKeys(
 		[
-			{keys: ':', desc: 'Riga di comando', group: 'App', run: () => keymap.openCmdline(':')},
-			{keys: '?', desc: 'Aiuto: tutti i tasti', group: 'App', run: () => setOverlay(overlay === 'help' ? undefined : 'help')},
-			{keys: 'q', desc: 'Esci', group: 'App', run: () => exit()},
+			{keys: ':', desc: 'Command line', group: 'App', run: () => keymap.openCmdline(':')},
+			{keys: '?', desc: 'Help: all keys', group: 'App', run: () => setOverlay(overlay === 'help' ? undefined : 'help')},
+			{keys: 'q', desc: 'Quit', group: 'App', run: () => exit()},
 		],
 		{priority: -10},
 	);
-	useCommand('help', 'Aiuto: tutti i tasti', () => setOverlay('help'));
+	useCommand('help', 'Help: all keys', () => setOverlay('help'));
 
 	return (
 		<Box flexDirection="column" width={columns} height={rows}>
@@ -93,7 +93,7 @@ function StatusLine({title, hint}: {title: string; hint: string | undefined}) {
 			<Box flexGrow={1} />
 			{pending ? <Box flexShrink={0}><Text color={theme.accent}>{pending} </Text></Box> : null}
 			<Box flexShrink={2}>
-				<Text color={theme.muted} wrap="truncate-start">{hint ?? '? aiuto  : comandi  q esci'} </Text>
+				<Text color={theme.muted} wrap="truncate-start">{hint ?? '? help  : commands  q quit'} </Text>
 			</Box>
 		</Box>
 	);
@@ -114,7 +114,7 @@ function WhichKey() {
 					<Text color={theme.text}>{binding.desc}</Text>
 				</Box>
 			)).slice(0, 12)}
-			<Text color={theme.muted}>{typed > 0 ? 'Esc annulla' : ''}</Text>
+			<Text color={theme.muted}>{typed > 0 ? 'Esc cancel' : ''}</Text>
 		</Box>
 	);
 }
@@ -125,21 +125,21 @@ function Help({onClose}: {onClose: () => void}) {
 	const [bindings] = useState(() => keymap.active('normal').filter(binding => binding.group !== 'hidden'));
 	useKeys(
 		[
-			{keys: '<Esc>', desc: 'Chiudi aiuto', group: 'hidden', run: onClose},
-			{keys: '?', desc: 'Chiudi aiuto', group: 'hidden', run: onClose},
-			{keys: 'q', desc: 'Chiudi aiuto', group: 'hidden', run: onClose},
+			{keys: '<Esc>', desc: 'Close help', group: 'hidden', run: onClose},
+			{keys: '?', desc: 'Close help', group: 'hidden', run: onClose},
+			{keys: 'q', desc: 'Close help', group: 'hidden', run: onClose},
 		],
 		{modal: true, priority: 1000},
 	);
 	useMouseBarrier(1000);
 	const groups = new Map<string, Binding[]>();
 	for (const binding of bindings) {
-		const group = binding.group ?? 'Altro';
+		const group = binding.group ?? 'Other';
 		groups.set(group, [...(groups.get(group) ?? []), binding]);
 	}
 	const commands = keymap.listCommands();
 	return (
-		<Overlay title="Aiuto">
+		<Overlay title="Help">
 			<Box gap={4}>
 				<Box flexDirection="column">
 					{[...groups].map(([group, list]) => (
@@ -155,7 +155,7 @@ function Help({onClose}: {onClose: () => void}) {
 					))}
 				</Box>
 				<Box flexDirection="column">
-					<Text bold color={theme.accent}>Comandi</Text>
+					<Text bold color={theme.accent}>Commands</Text>
 					{commands.map(command => (
 						<Box key={command.name} gap={2}>
 							<Box width={11} flexShrink={0}><Text color={theme.warning}>:{command.name}</Text></Box>
@@ -164,7 +164,7 @@ function Help({onClose}: {onClose: () => void}) {
 					))}
 				</Box>
 			</Box>
-			<Text color={theme.muted}>Esc, ? o q per chiudere</Text>
+			<Text color={theme.muted}>Esc, ? or q to close</Text>
 		</Overlay>
 	);
 }
@@ -188,8 +188,8 @@ export function Modal({title, onClose, bindings = [], children}: {title: string;
 	useKeys(
 		[
 			...bindings,
-			{keys: '<Esc>', desc: 'Chiudi', group: 'Finestra', run: onClose},
-			{keys: 'q', desc: 'Chiudi', group: 'Finestra', run: onClose},
+			{keys: '<Esc>', desc: 'Close', group: 'Window', run: onClose},
+			{keys: 'q', desc: 'Close', group: 'Window', run: onClose},
 		],
 		{modal: true},
 	);

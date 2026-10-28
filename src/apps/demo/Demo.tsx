@@ -23,13 +23,13 @@ export function Demo() {
 	const [screen, setScreen] = useState<Screen>('list');
 	const toggle = () => setScreen(current => (current === 'list' ? 'canvas' : 'list'));
 	useKeys([
-		{keys: '<Space>1', desc: 'Vai alla lista', group: 'Schermate', run: () => setScreen('list')},
-		{keys: '<Space>2', desc: 'Vai al canvas', group: 'Schermate', run: () => setScreen('canvas')},
-		{keys: 'gt', desc: 'Schermata successiva', group: 'Schermate', run: toggle},
-		{keys: 'gT', desc: 'Schermata precedente', group: 'Schermate', run: toggle},
+		{keys: '<Space>1', desc: 'Go to the list', group: 'Screens', run: () => setScreen('list')},
+		{keys: '<Space>2', desc: 'Go to the canvas', group: 'Screens', run: () => setScreen('canvas')},
+		{keys: 'gt', desc: 'Next screen', group: 'Screens', run: toggle},
+		{keys: 'gT', desc: 'Previous screen', group: 'Screens', run: toggle},
 	]);
 	return (
-		<Shell title={screen === 'list' ? 'Demo · Lista' : 'Demo · Canvas'}>
+		<Shell title={screen === 'list' ? 'Demo · List' : 'Demo · Canvas'}>
 			<Tabs screen={screen} />
 			{screen === 'list' ? <FileList /> : <Drawing />}
 		</Shell>
@@ -42,17 +42,17 @@ function Tabs({screen}: {screen: Screen}) {
 	);
 	return (
 		<Box height={1} gap={1}>
-			{tab('list', '1 Lista')}
+			{tab('list', '1 List')}
 			{tab('canvas', '2 Canvas')}
-			<Text color={theme.muted}>  gt/gT o ␣1 ␣2 per cambiare</Text>
+			<Text color={theme.muted}>  gt/gT or ␣1 ␣2 to switch</Text>
 		</Box>
 	);
 }
 
 type Item = {name: string; size: number; kind: string};
 
-const KINDS = ['documento', 'immagine', 'progetto', 'archivio', 'nota'];
-const WORDS = ['bilancio', 'bottiglia', 'progetto', 'fattura', 'schema', 'render', 'foto', 'appunti', 'contratto', 'logo'];
+const KINDS = ['document', 'image', 'project', 'archive', 'note'];
+const WORDS = ['budget', 'bottle', 'project', 'invoice', 'schema', 'render', 'photo', 'notes', 'contract', 'logo'];
 
 function makeItems(count: number): Item[] {
 	return Array.from({length: count}, (_, index) => ({
@@ -69,12 +69,12 @@ function FileList() {
 	const remove = (item: Item) => {
 		setItems(current => current.filter(other => other !== item));
 		setOpen(undefined);
-		keymap.flash(`Eliminato ${item.name}`);
+		keymap.flash(`Deleted ${item.name}`);
 	};
 	return (
 		<Box flexDirection="column" flexGrow={1}>
 			<Box height={1}>
-				<Text color={theme.muted}>{`  ${items.length} elementi · j/k muovi · / cerca · ⏎ apri · clic e rotella`}</Text>
+				<Text color={theme.muted}>{`  ${items.length} items · j/k move · / search · ⏎ open · click and wheel`}</Text>
 			</Box>
 			<List
 				items={items}
@@ -93,12 +93,12 @@ function FileList() {
 				<Modal
 					title={open.name}
 					onClose={() => setOpen(undefined)}
-					bindings={[{keys: 'dd', desc: 'Elimina', group: 'Finestra', run: () => remove(open)}]}
+					bindings={[{keys: 'dd', desc: 'Delete', group: 'Window', run: () => remove(open)}]}
 				>
-					<Text color={theme.text}>{`Tipo: ${open.kind}`}</Text>
-					<Text color={theme.text}>{`Dimensione: ${(open.size / 1000).toFixed(1)} MB`}</Text>
+					<Text color={theme.text}>{`Type: ${open.kind}`}</Text>
+					<Text color={theme.text}>{`Size: ${(open.size / 1000).toFixed(1)} MB`}</Text>
 					<Box height={1} />
-					<Text color={theme.muted}>dd elimina · Esc chiudi</Text>
+					<Text color={theme.muted}>dd delete · Esc close</Text>
 				</Modal>
 			) : null}
 		</Box>
@@ -109,13 +109,13 @@ type Tool = 'pen' | 'line' | 'rect' | 'ellipse' | 'eraser';
 type Stroke = {tool: Tool; color: RGB; width: number; points: [number, number][]};
 
 const COLORS: {name: string; rgb: RGB}[] = [
-	{name: 'nero', rgb: [30, 30, 40]},
-	{name: 'blu', rgb: [40, 90, 220]},
-	{name: 'rosso', rgb: [220, 50, 60]},
-	{name: 'verde', rgb: [40, 160, 80]},
-	{name: 'arancio', rgb: [240, 140, 30]},
+	{name: 'black', rgb: [30, 30, 40]},
+	{name: 'blue', rgb: [40, 90, 220]},
+	{name: 'red', rgb: [220, 50, 60]},
+	{name: 'green', rgb: [40, 160, 80]},
+	{name: 'orange', rgb: [240, 140, 30]},
 ];
-const TOOL_LABEL: Record<Tool, string> = {pen: 'penna', line: 'linea', rect: 'rettangolo', ellipse: 'ellisse', eraser: 'gomma'};
+const TOOL_LABEL: Record<Tool, string> = {pen: 'pen', line: 'line', rect: 'rectangle', ellipse: 'ellipse', eraser: 'eraser'};
 const PAPER: RGB = [250, 250, 245];
 
 function Drawing() {
@@ -202,30 +202,30 @@ function Drawing() {
 	};
 
 	useKeys([
-		{keys: 'h', desc: 'Cursore a sinistra', group: 'Canvas', run: count => moveCursor(-count, 0)},
-		{keys: 'l', desc: 'Cursore a destra', group: 'Canvas', run: count => moveCursor(count, 0)},
-		{keys: 'j', desc: 'Cursore giù', group: 'Canvas', run: count => moveCursor(0, count)},
-		{keys: 'k', desc: 'Cursore su', group: 'Canvas', run: count => moveCursor(0, -count)},
-		{keys: '<CR>', desc: 'Abbassa/alza la penna al cursore', group: 'Canvas', run: togglePen},
-		{keys: 'tp', desc: 'Strumento penna', group: 'Strumenti', run: () => setTool('pen')},
-		{keys: 'tl', desc: 'Strumento linea', group: 'Strumenti', run: () => setTool('line')},
-		{keys: 'tr', desc: 'Strumento rettangolo', group: 'Strumenti', run: () => setTool('rect')},
-		{keys: 'to', desc: 'Strumento ellisse', group: 'Strumenti', run: () => setTool('ellipse')},
-		{keys: 'te', desc: 'Strumento gomma', group: 'Strumenti', run: () => setTool('eraser')},
-		{keys: 'c', desc: 'Colore successivo', group: 'Strumenti', run: () => setColor(value => (value + 1) % COLORS.length)},
-		{keys: '+', desc: 'Tratto più spesso', group: 'Strumenti', run: () => setWidth(value => Math.min(4, value + 1))},
-		{keys: '-', desc: 'Tratto più sottile', group: 'Strumenti', run: () => setWidth(value => Math.max(1, value - 1))},
-		{keys: 'u', desc: 'Annulla', group: 'Canvas', run: count => Array.from({length: count}, undo)},
-		{keys: '<C-r>', desc: 'Ripeti', group: 'Canvas', run: count => Array.from({length: count}, redo)},
-		{keys: 'b', desc: 'Cambia resa grafica', group: 'Canvas', run: () => {
+		{keys: 'h', desc: 'Cursor left', group: 'Canvas', run: count => moveCursor(-count, 0)},
+		{keys: 'l', desc: 'Cursor right', group: 'Canvas', run: count => moveCursor(count, 0)},
+		{keys: 'j', desc: 'Cursor down', group: 'Canvas', run: count => moveCursor(0, count)},
+		{keys: 'k', desc: 'Cursor up', group: 'Canvas', run: count => moveCursor(0, -count)},
+		{keys: '<CR>', desc: 'Pen down/up at the cursor', group: 'Canvas', run: togglePen},
+		{keys: 'tp', desc: 'Pen tool', group: 'Tools', run: () => setTool('pen')},
+		{keys: 'tl', desc: 'Line tool', group: 'Tools', run: () => setTool('line')},
+		{keys: 'tr', desc: 'Rectangle tool', group: 'Tools', run: () => setTool('rect')},
+		{keys: 'to', desc: 'Ellipse tool', group: 'Tools', run: () => setTool('ellipse')},
+		{keys: 'te', desc: 'Eraser tool', group: 'Tools', run: () => setTool('eraser')},
+		{keys: 'c', desc: 'Next color', group: 'Tools', run: () => setColor(value => (value + 1) % COLORS.length)},
+		{keys: '+', desc: 'Thicker stroke', group: 'Tools', run: () => setWidth(value => Math.min(4, value + 1))},
+		{keys: '-', desc: 'Thinner stroke', group: 'Tools', run: () => setWidth(value => Math.max(1, value - 1))},
+		{keys: 'u', desc: 'Undo', group: 'Canvas', run: count => Array.from({length: count}, undo)},
+		{keys: '<C-r>', desc: 'Redo', group: 'Canvas', run: count => Array.from({length: count}, redo)},
+		{keys: 'b', desc: 'Switch the graphics backend', group: 'Canvas', run: () => {
 			setBackend(value => backends[(backends.indexOf(value) + 1) % backends.length]!);
 			redraw();
 		}},
 	]);
-	useCommand('clear', 'Svuota il canvas', clear);
-	useCommand('backend', 'Resa: braille, half o kitty', name => {
+	useCommand('clear', 'Clear the canvas', clear);
+	useCommand('backend', 'Backend: braille, half or kitty', name => {
 		if ((backends as string[]).includes(name)) setBackend(name as Backend);
-		else keymap.flash(`Rese disponibili: ${backends.join(', ')}`);
+		else keymap.flash(`Available backends: ${backends.join(', ')}`);
 	});
 
 	const draw = (raster: import('../../kit/index.js').Raster, {sx, sy}: {sx: number; sy: number}) => {
@@ -257,10 +257,10 @@ function Drawing() {
 			<Box height={1} gap={2}>
 				<Text color={theme.text}>{` ${TOOL_LABEL[tool]}`}</Text>
 				<Text color={`rgb(${COLORS[color]!.rgb.join(',')})`}>{`● ${COLORS[color]!.name}`}</Text>
-				<Text color={theme.muted}>{`spessore ${width}`}</Text>
-				<Text color={theme.accent}>{`resa ${backend}`}</Text>
+				<Text color={theme.muted}>{`width ${width}`}</Text>
+				<Text color={theme.accent}>{`backend ${backend}`}</Text>
 				<Text color={theme.muted}>{`frame ${stats.ms.toFixed(1)} ms · ${(stats.bytes / 1024).toFixed(0)} KB`}</Text>
-				<Text color={theme.muted}>{caps.sgrPixels ? 'mouse in pixel' : 'mouse a celle'}</Text>
+				<Text color={theme.muted}>{caps.sgrPixels ? 'mouse in pixels' : 'mouse in cells'}</Text>
 			</Box>
 			<Canvas
 				backend={backend}

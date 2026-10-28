@@ -48,7 +48,7 @@ export function List<T>({items, render, text, onOpen, active = true, height: fix
 			setCursor(0);
 			setOffset(0);
 			if (!live) {
-				keymap.flash(value ? `Filtro: ${value}` : '');
+				keymap.flash(value ? `Filter: ${value}` : '');
 			}
 		});
 	}, [keymap, active]);
@@ -62,16 +62,16 @@ export function List<T>({items, render, text, onOpen, active = true, height: fix
 
 	useKeys(
 		[
-			{keys: 'j', desc: 'Giù', group: 'Lista', run: count => moveTo(cursor + count)},
-			{keys: 'k', desc: 'Su', group: 'Lista', run: count => moveTo(cursor - count)},
-			{keys: '<Down>', desc: 'Giù', group: 'hidden', run: count => moveTo(cursor + count)},
-			{keys: '<Up>', desc: 'Su', group: 'hidden', run: count => moveTo(cursor - count)},
-			{keys: 'gg', desc: 'Primo', group: 'Lista', run: () => moveTo(0)},
-			{keys: 'G', desc: 'Ultimo', group: 'Lista', run: () => moveTo(last)},
-			{keys: '<C-d>', desc: 'Mezza pagina giù', group: 'Lista', run: () => moveTo(cursor + Math.ceil(rows / 2))},
-			{keys: '<C-u>', desc: 'Mezza pagina su', group: 'Lista', run: () => moveTo(cursor - Math.ceil(rows / 2))},
-			{keys: '/', desc: 'Cerca', group: 'Lista', run: () => keymap.openCmdline('/')},
-			{keys: '<CR>', desc: 'Apri', group: 'Lista', run: open},
+			{keys: 'j', desc: 'Down', group: 'List', run: count => moveTo(cursor + count)},
+			{keys: 'k', desc: 'Up', group: 'List', run: count => moveTo(cursor - count)},
+			{keys: '<Down>', desc: 'Down', group: 'hidden', run: count => moveTo(cursor + count)},
+			{keys: '<Up>', desc: 'Up', group: 'hidden', run: count => moveTo(cursor - count)},
+			{keys: 'gg', desc: 'First', group: 'List', run: () => moveTo(0)},
+			{keys: 'G', desc: 'Last', group: 'List', run: () => moveTo(last)},
+			{keys: '<C-d>', desc: 'Half page down', group: 'List', run: () => moveTo(cursor + Math.ceil(rows / 2))},
+			{keys: '<C-u>', desc: 'Half page up', group: 'List', run: () => moveTo(cursor - Math.ceil(rows / 2))},
+			{keys: '/', desc: 'Search', group: 'List', run: () => keymap.openCmdline('/')},
+			{keys: '<CR>', desc: 'Open', group: 'List', run: open},
 		],
 		{active},
 	);
@@ -110,7 +110,7 @@ export function List<T>({items, render, text, onOpen, active = true, height: fix
 					</Box>
 				);
 			})}
-			{visible.length === 0 ? <Text color={theme.muted}> Nessun risultato</Text> : null}
+			{visible.length === 0 ? <Text color={theme.muted}> No results</Text> : null}
 		</Box>
 	);
 }

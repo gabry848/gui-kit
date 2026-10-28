@@ -52,7 +52,7 @@ function bytesFor(token: string): string {
 	const meta = /^<M-(.)>$/u.exec(token);
 	if (meta) return '\u001B' + meta[1];
 	// A name it cannot send must not be typed as the characters "<", "E", "n"...
-	if (token.length > 1 && token.startsWith('<')) throw new Error(`gui screen non sa inviare il tasto ${token}`);
+	if (token.length > 1 && token.startsWith('<')) throw new Error(`gui screen cannot send the key ${token}`);
 	return token;
 }
 
