@@ -4,7 +4,7 @@
 	"entry": "app.tsx",
 	"kit": "^0.1.0",
 	"permissions": {
-		"read": ["~/.gitconfig", "~/.config/git", "~/.nvm"],
+		"read": ["$REPO", "~/.nvm"],
 		"write": ["$CWD"],
 		"run": ["*"],
 		"net": true

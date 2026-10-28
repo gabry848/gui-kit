@@ -8,8 +8,9 @@
 //   it; writing implies reading, which the Files and Git tabs need. The rest
 //   of your home stays closed, apart from what every app gets (its own
 //   folder, its data folder, the kit, ~/.bun).
-// - read ~/.gitconfig, ~/.config/git: without them git stops with "fatal:
-//   unable to access ~/.gitconfig: Operation not permitted".
+// - read $REPO: the git work tree around $CWD, so the Git tab also works when
+//   workbench starts in a subfolder of a repo. git's global config
+//   (~/.gitconfig, ~/.config/git) comes with run *.
 // - read ~/.nvm: npm and node installed with nvm live there; without it
 //   `npm run` cannot load npm itself. Toolchains elsewhere in your home
 //   (cargo, pyenv, volta) would need their folder added the same way.
