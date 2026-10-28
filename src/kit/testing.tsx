@@ -7,6 +7,7 @@ import type {ReactNode} from 'react';
 import {render} from 'ink';
 import xterm from '@xterm/headless';
 import {KitProvider} from './context.js';
+import {GraphicsContext, GraphicsLayer} from './graphics.js';
 import {InputSplitter} from './input.js';
 import {tokenize} from './keymap.js';
 import type {Caps} from './probe.js';
@@ -57,7 +58,7 @@ function bytesFor(token: string): string {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const TEST_CAPS: Caps = {graphics: 'none', kittyGraphicsDetected: false, truecolor: true, sgrPixels: false, syncOutput: true, kittyKeyboard: false, cell: undefined, inTmux: false};
+export const TEST_CAPS: Caps = {graphics: 'none', kittyGraphicsDetected: false, sixelDetected: false, terminal: undefined, truecolor: true, sgrPixels: false, syncOutput: true, kittyKeyboard: false, cell: undefined, inTmux: false};
 
 export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = TEST_CAPS} = {}) {
 	const term = new xterm.Terminal({cols, rows, allowProposedApi: true, convertEol: true});
@@ -68,6 +69,7 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 	// Leaving the alternate screen on exit blanks it, so keep the frame drawn
 	// just before that, once xterm has processed everything up to it.
 	let lastFrame: string[] | undefined;
+	let raw = '';
 	const LEAVE_ALT = '\u001B[?1049l';
 	const stdin = new FakeStdin();
 	const stdout = Object.assign(new EventEmitter(), {
@@ -77,6 +79,7 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 		// Ink waits for the write callback before waitUntilExit resolves.
 		write(data: string, encodingOrDone?: unknown, done?: () => void) {
 			const callback = typeof encodingOrDone === 'function' ? (encodingOrDone as () => void) : done;
+			raw += data;
 			const leave = data.indexOf(LEAVE_ALT);
 			if (leave === -1 || lastFrame) {
 				term.write(data, callback);
@@ -96,9 +99,12 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 	const onFinish = (value: unknown) => {
 		result = {value};
 	};
-	const instance = render(<KitProvider caps={caps} input={input} onFinish={onFinish}>{node}</KitProvider>, {
+	// As in run(): with sixel, Ink writes through the graphics layer.
+	const layer = caps.graphics === 'sixel' ? new GraphicsLayer(stdout as unknown as NodeJS.WriteStream, caps.syncOutput) : undefined;
+	const tree = <KitProvider caps={caps} input={input} onFinish={onFinish}>{node}</KitProvider>;
+	const instance = render(<GraphicsContext.Provider value={layer}>{tree}</GraphicsContext.Provider>, {
 		...RENDER_OPTIONS,
-		stdout: stdout as unknown as NodeJS.WriteStream,
+		stdout: layer?.stream ?? (stdout as unknown as NodeJS.WriteStream),
 		stdin: input as unknown as NodeJS.ReadStream,
 		interactive: true,
 		patchConsole: false,
@@ -148,6 +154,10 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 		screen(): string {
 			return this.lines().join('\n');
 		},
+		/** Every byte written to the terminal so far, escape sequences included. */
+		output(): string {
+			return raw;
+		},
 		/** What the app passed to finish(), if it has. */
 		result(): {value: unknown} | undefined {
 			return result;
@@ -163,6 +173,7 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 		async exit() {
 			instance.unmount();
 			await settle(10);
+			layer?.dispose();
 			term.dispose();
 		},
 		settle,

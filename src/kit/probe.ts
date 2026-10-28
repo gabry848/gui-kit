@@ -5,13 +5,25 @@
 
 export type Caps = {
 	/**
-	 * Pixel graphics through kitty Unicode placeholders. Opt-in with
-	 * GUI_GRAPHICS=kitty while it gets more use: its first version crashed
-	 * Ghostty 1.3.1 (zlib payloads, see bench/ghostty-zlib-crash.md).
+	 * How images and pixel canvases are drawn.
+	 * - 'kitty': kitty Unicode placeholders with PNG payloads. On by default
+	 *   when the terminal answered the kitty graphics query outside tmux and
+	 *   XTVERSION names kitty, or Ghostty 1.4.0 or later (dev and tip builds
+	 *   included). Ghostty 1.3.x crashed on zlib payloads
+	 *   (bench/ghostty-zlib-crash.md), so there it stays opt-in.
+	 * - 'sixel': opt-in only (GUI_GRAPHICS=sixel), and only when DA1 listed
+	 *   sixel and the cell size is known.
+	 * - 'none': text only (braille and half blocks).
+	 * GUI_GRAPHICS=kitty or =sixel turns a protocol on wherever the terminal
+	 * reported it; GUI_GRAPHICS=none forces text.
 	 */
-	graphics: 'kitty' | 'none';
-	/** The terminal answered the kitty graphics query. */
+	graphics: 'kitty' | 'sixel' | 'none';
+	/** The terminal answered the kitty graphics query (never inside tmux). */
 	kittyGraphicsDetected: boolean;
+	/** DA1 listed sixel graphics (attribute 4). */
+	sixelDetected: boolean;
+	/** Name and version from XTVERSION, e.g. {name: 'ghostty', version: '1.3.1'}. */
+	terminal: {name: string; version: string} | undefined;
 	truecolor: boolean;
 	/** Mouse reports in pixels (DEC mode 1016). */
 	sgrPixels: boolean;
@@ -25,7 +37,28 @@ export type Caps = {
 };
 
 const KITTY_QUERY = '\u001B_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u001B\\';
-const QUERIES = KITTY_QUERY + '\u001B[?1016$p' + '\u001B[?2026$p' + '\u001B[?u' + '\u001B[16t' + '\u001B[c';
+const XTVERSION = '\u001B[>0q';
+/** Everything the probe asks, DA1 last. */
+export const PROBE_QUERIES = KITTY_QUERY + '\u001B[?1016$p' + '\u001B[?2026$p' + '\u001B[?u' + '\u001B[16t' + XTVERSION + '\u001B[c';
+
+/** "kitty(0.39.1)", "ghostty 1.3.1", "WezTerm 20240203-110809-5046fc22". */
+function parseTerminal(text: string): Caps['terminal'] {
+	const match = /^\s*([^\s(]+)\s*(?:\(([^)]*)\)|(\S.*?))?\s*$/.exec(text);
+	return match ? {name: match[1]!, version: (match[2] ?? match[3] ?? '').trim()} : undefined;
+}
+
+/** Terminals where kitty graphics are known to work with the kit. */
+function kittyByDefault(terminal: Caps['terminal']): boolean {
+	const name = terminal?.name.toLowerCase();
+	if (name === 'kitty') return true;
+	if (name !== 'ghostty') return false;
+	try {
+		// 1.4.0-0 is the lowest 1.4.0 prerelease, so 1.4.0-dev builds pass too.
+		return Bun.semver.order(terminal!.version, '1.4.0-0') >= 0;
+	} catch {
+		return false;
+	}
+}
 
 export function capsFromReplies(replies: string, env: NodeJS.ProcessEnv): Caps {
 	const inTmux = Boolean(env['TMUX']);
@@ -34,16 +67,29 @@ export function capsFromReplies(replies: string, env: NodeJS.ProcessEnv): Caps {
 		return match ? ['1', '2', '3', '4'].includes(match[1]!) : false;
 	};
 	const cellMatch = /\u001B\[6;(\d+);(\d+)t/.exec(replies);
+	const cell = cellMatch ? {h: Number(cellMatch[1]), w: Number(cellMatch[2])} : undefined;
 	const kittyGraphicsDetected = /\u001B_Gi=31;OK/.test(replies) && !inTmux;
+	const version = /\u001BP>\|([^\u001B\u0007]*)(?:\u001B\\|\u0007)/.exec(replies);
+	const terminal = version ? parseTerminal(version[1]!) : undefined;
+	// DA1: the first parameter is the device class, the rest are features.
+	const da1 = /\u001B\[\?([\d;]*)c/.exec(replies);
+	const sixelDetected = (da1?.[1] ?? '').split(';').slice(1).includes('4');
+	const wanted = env['GUI_GRAPHICS'];
+	let graphics: Caps['graphics'] = 'none';
+	if (wanted === 'kitty') graphics = kittyGraphicsDetected ? 'kitty' : 'none';
+	else if (wanted === 'sixel') graphics = sixelDetected && cell ? 'sixel' : 'none';
+	else if (wanted !== 'none' && kittyGraphicsDetected && kittyByDefault(terminal)) graphics = 'kitty';
 	return {
-		graphics: kittyGraphicsDetected && env['GUI_GRAPHICS'] === 'kitty' ? 'kitty' : 'none',
+		graphics,
 		kittyGraphicsDetected,
+		sixelDetected,
+		terminal,
 		truecolor: /truecolor|24bit/i.test(env['COLORTERM'] ?? '') || kittyGraphicsDetected,
 		// Pixel reports are only usable when the cell size is known.
-		sgrPixels: mode(1016) && cellMatch !== null && env['GUI_MOUSE_PIXELS'] !== '0',
+		sgrPixels: mode(1016) && cell !== undefined && env['GUI_MOUSE_PIXELS'] !== '0',
 		syncOutput: mode(2026),
 		kittyKeyboard: /\u001B\[\?\d+u/.test(replies),
-		cell: cellMatch ? {h: Number(cellMatch[1]), w: Number(cellMatch[2])} : undefined,
+		cell,
 		inTmux,
 	};
 }
@@ -75,7 +121,7 @@ export async function probe(
 		stdin.setRawMode(true);
 		stdin.on('data', onData);
 		stdin.resume();
-		stdout.write(QUERIES);
+		stdout.write(PROBE_QUERIES);
 	});
 
 	return capsFromReplies(replies, process.env);

@@ -1,17 +1,21 @@
 // Turns a raster into terminal lines. Braille and half blocks are plain
 // characters and work in any terminal; kitty sends real pixels and leaves
 // placeholder characters in the text, so Ink diffs them like any other text.
+// Sixel pixels are drawn over a blank box by the graphics layer (graphics.ts).
 
 import {deflateSync} from 'node:zlib';
+import type {Bitmap} from './bitmap.js';
 import {DIACRITICS} from './diacritics.js';
 import type {Raster, RGB} from './raster.js';
 
-export type Backend = 'braille' | 'half' | 'kitty';
+export type Backend = 'braille' | 'half' | 'kitty' | 'sixel';
 
 /** Raster pixels per terminal cell for each backend. */
 export function pixelsPerCell(backend: Backend, cell?: {w: number; h: number}): {sx: number; sy: number} {
 	if (backend === 'braille') return {sx: 2, sy: 4};
 	if (backend === 'half') return {sx: 1, sy: 2};
+	// Sixel draws 1:1, so the raster must match the cell size exactly.
+	if (backend === 'sixel') return {sx: cell?.w ?? 10, sy: cell?.h ?? 20};
 	// Real pixels, capped so a full-screen canvas stays a few megabytes.
 	const w = Math.min(cell?.w ?? 10, 10);
 	const h = Math.min(cell?.h ?? 20, 20);
@@ -113,7 +117,7 @@ function pngChunk(type: string, data: Uint8Array): Buffer {
 }
 
 /** RGBA raster as a PNG file, compressed fast. */
-export function encodePng(raster: Raster): Buffer {
+export function encodePng(raster: Bitmap): Buffer {
 	const header = Buffer.alloc(13);
 	header.writeUInt32BE(raster.width, 0);
 	header.writeUInt32BE(raster.height, 4);
@@ -136,7 +140,7 @@ export function encodePng(raster: Raster): Buffer {
  * (f=100): Ghostty 1.3.1 crashes decoding some valid zlib streams sent as
  * o=z, among them those Bun's deflate produces (bench/ghostty-zlib-crash.md).
  */
-export function kittyTransmit(raster: Raster, cols: number, rows: number, id: number): string {
+export function kittyTransmit(raster: Bitmap, cols: number, rows: number, id: number): string {
 	const payload = encodePng(raster).toString('base64');
 	let out = '';
 	for (let start = 0; start < payload.length; start += CHUNK) {
@@ -164,3 +168,11 @@ export function kittyPlaceholders(cols: number, rows: number, id: number): strin
 }
 
 export const KITTY_MAX_CELLS = DIACRITICS.length;
+
+let lastKittyId = 0;
+
+/** A kitty image id for placeholders, 1..255 (the id rides in a 256-color foreground). */
+export function nextKittyId(): number {
+	lastKittyId = (lastKittyId % 255) + 1;
+	return lastKittyId;
+}

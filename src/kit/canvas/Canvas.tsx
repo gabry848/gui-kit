@@ -1,6 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {Box, Text, useBoxMetrics, type DOMElement} from 'ink';
 import {useKit, useMouse} from '../context.js';
+import {sixelFor, useGraphics} from '../graphics.js';
 import {absolutePosition} from '../layout.js';
 import {
 	encodeBraille,
@@ -8,6 +9,7 @@ import {
 	KITTY_MAX_CELLS,
 	kittyPlaceholders,
 	kittyTransmit,
+	nextKittyId,
 	pixelsPerCell,
 	type Backend,
 } from './encode.js';
@@ -34,17 +36,19 @@ type Props = {
 	onFrame?: (ms: number, bytes: number) => void;
 };
 
-let nextImageId = 1;
-
 export function Canvas({backend, version, draw, background = [250, 250, 245], onPointer, onFrame}: Props) {
 	const ref = useRef<DOMElement>(null);
 	const {width, height} = useBoxMetrics(ref);
 	const {caps, write} = useKit();
-	const [imageId] = useState(() => (nextImageId++ % 255) + 1);
-	// Kitty pixels only where the probe allowed them (GUI_GRAPHICS=kitty and a
-	// terminal that answered); otherwise draw braille, which works anywhere.
+	const layer = useGraphics();
+	const [imageId] = useState(nextKittyId);
+	const [key] = useState(() => ({}));
+	// Pixels only where the probe allowed them (see Caps.graphics); otherwise
+	// draw braille, which works anywhere.
 	if (backend === 'kitty' && caps.graphics !== 'kitty') backend = 'braille';
+	if (backend === 'sixel' && (caps.graphics !== 'sixel' || !caps.cell || !layer)) backend = 'braille';
 	const kitty = backend === 'kitty';
+	const sixel = backend === 'sixel';
 	const cols = kitty ? Math.min(width, KITTY_MAX_CELLS) : width;
 	const rows = kitty ? Math.min(height, KITTY_MAX_CELLS) : height;
 	const scale = pixelsPerCell(backend, caps.cell);
@@ -60,6 +64,11 @@ export function Canvas({backend, version, draw, background = [250, 250, 245], on
 			const transmit = kittyTransmit(raster, cols, rows, imageId);
 			return {lines: kittyPlaceholders(cols, rows, imageId), transmit, ms: performance.now() - started};
 		}
+		if (sixel) {
+			// The box stays blank; the graphics layer draws the pixels over it.
+			const data = sixelFor(raster, cols, rows, caps.cell!);
+			return {lines: [] as string[], transmit: '', raster, sixel: data, ms: performance.now() - started};
+		}
 		const lines = backend === 'braille' ? encodeBraille(raster, cols, rows) : encodeHalf(raster, cols, rows);
 		return {lines, transmit: '', ms: performance.now() - started};
 	}, [cols, rows, backend, version, scale.sx, scale.sy]);
@@ -68,10 +77,18 @@ export function Canvas({backend, version, draw, background = [250, 250, 245], on
 		if (frame.transmit) {
 			write(frame.transmit);
 		}
-		onFrame?.(frame.ms, frame.transmit.length + frame.lines.reduce((sum, line) => sum + line.length, 0));
+		if (layer) {
+			layer.show(key, frame.raster && ref.current
+				? {node: ref.current, bitmap: frame.raster, cols, rows, cell: caps.cell!, sixel: frame.sixel ?? ''}
+				: undefined);
+		}
+		onFrame?.(frame.ms, frame.transmit.length + (frame.sixel?.length ?? 0) + frame.lines.reduce((sum, line) => sum + line.length, 0));
 	}, [frame]);
 
-	useEffect(() => () => write(`\u001B_Ga=d,d=I,i=${imageId},q=2\u001B\\`), [imageId]);
+	useEffect(() => () => {
+		layer?.show(key, undefined);
+		write(`\u001B_Ga=d,d=I,i=${imageId},q=2\u001B\\`);
+	}, [imageId]);
 
 	useMouse(event => {
 		if (!onPointer || !ref.current || event.kind === 'move') {
