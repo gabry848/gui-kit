@@ -1,8 +1,9 @@
 import {useEffect, useMemo, useRef, useState, type ReactNode} from 'react';
-import {Box, Text, useBoxMetrics, type DOMElement} from 'ink';
+import {Box, Text, type DOMElement} from 'ink';
 import {useKeys, useKit, useMouse} from '../context.js';
 import {absolutePosition} from '../layout.js';
 import {theme} from '../theme.js';
+import {useAutoHeight} from './height.js';
 
 type Props = {
 	/** The text, or its lines. */
@@ -92,7 +93,6 @@ function after(sorted: number[], value: number): number {
  */
 export function Pager({text, active = true, height: fixedHeight, follow = false, ansi = false, offset = 0}: Props) {
 	const ref = useRef<DOMElement>(null);
-	const {height: measured} = useBoxMetrics(ref);
 	const {keymap} = useKit();
 	// The length too, in case the caller appends to the same array.
 	const lines = useMemo(() => toLines(text, ansi), [text, typeof text === 'string' ? 0 : text.length, ansi]);
@@ -105,7 +105,8 @@ export function Pager({text, active = true, height: fixedHeight, follow = false,
 	const [match, setMatch] = useState(-1);
 	const origin = useRef(offset);
 
-	const height = fixedHeight ?? (measured > 1 ? measured : Math.min(Math.max(lines.length, 1), 10) + 1);
+	// The space the parent gives, or up to 10 lines and the position line in a parent sized by its content.
+	const height = useAutoHeight(ref, Math.min(Math.max(lines.length, 1), 10) + 1, fixedHeight);
 	const rows = Math.max(1, height - 1);
 	const maxTop = Math.max(0, lines.length - rows);
 	// Once the lines it was on are cut, the view stays on the oldest one left.

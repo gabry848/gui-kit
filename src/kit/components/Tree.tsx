@@ -1,8 +1,10 @@
 import {useEffect, useRef, useState} from 'react';
-import {Box, Text, useBoxMetrics, type DOMElement} from 'ink';
+import {Box, Text, type DOMElement} from 'ink';
 import {useKeys, useKit, useMouse} from '../context.js';
 import {absolutePosition} from '../layout.js';
 import {theme} from '../theme.js';
+import {fingerprint, useCursorReport} from './cursor.js';
+import {useAutoHeight} from './height.js';
 
 export type TreeNode = {
 	/** Unique among its siblings. */
@@ -20,7 +22,8 @@ type Props = {
 	/**
 	 * The highlighted node each time it changes, as List's onCursor: first on
 	 * mount, undefined when nothing is highlighted or the tree unmounts. A
-	 * node counts as the same while its path of ids stays the same.
+	 * node counts as the same while its path of ids, its label and its other
+	 * string, number and boolean fields stay the same.
 	 */
 	onCursor?: (node: TreeNode | undefined) => void;
 	active?: boolean;
@@ -67,7 +70,6 @@ function flatten(nodes: TreeNode[], shape: Shape, depth = 0, parent?: string, ou
  */
 export function Tree({nodes, onOpen, onCursor, active = true, height: fixedHeight}: Props) {
 	const ref = useRef<DOMElement>(null);
-	const {height: measured} = useBoxMetrics(ref);
 	const {keymap} = useKit();
 	const [expanded, setExpanded] = useState(() => new Set<string>());
 	const [loaded, setLoaded] = useState(() => new Map<string, TreeNode[]>());
@@ -83,7 +85,8 @@ export function Tree({nodes, onOpen, onCursor, active = true, height: fixedHeigh
 	}, []);
 
 	const rows = flatten(nodes, {expanded, loaded, loading, query});
-	const height = fixedHeight ?? (measured > 1 ? measured : Math.min(Math.max(rows.length, 1), 10));
+	// The space the parent gives, or up to 10 rows in a parent sized by its content.
+	const height = useAutoHeight(ref, Math.min(Math.max(rows.length, 1), 10), fixedHeight);
 	const last = Math.max(0, rows.length - 1);
 
 	// The cursor follows its node; when a collapse hides it, it lands on the nearest visible ancestor.
@@ -100,18 +103,8 @@ export function Tree({nodes, onOpen, onCursor, active = true, height: fixedHeigh
 
 	const moveTo = (target: number) => setCursor(rows[Math.min(last, Math.max(0, target))]?.key);
 
-	// By path, not identity: nodes built anew on each render are still the same node.
-	const reported = useRef<string | undefined>(undefined);
-	const latestCursor = useRef(onCursor);
-	latestCursor.current = onCursor;
-	useEffect(() => {
-		if (row?.key === reported.current) return;
-		reported.current = row?.key;
-		latestCursor.current?.(row?.node);
-	});
-	useEffect(() => () => {
-		if (reported.current !== undefined) latestCursor.current?.(undefined);
-	}, []);
+	// By path and content, not identity: nodes built anew on each render are still the same node.
+	useCursorReport(row === undefined ? undefined : `${row.key}\u0001${fingerprint(row.node)}`, row?.node, onCursor);
 
 	const expand = (target: Row) => {
 		if (!target.branch) return;
@@ -254,7 +247,7 @@ export function Tree({nodes, onOpen, onCursor, active = true, height: fixedHeigh
 			{rows.slice(start, start + height).map((item, position) => {
 				const selected = start + position === index;
 				return (
-					<Box key={item.key} height={1} {...(selected ? {backgroundColor: theme.selection} : {})}>
+					<Box key={item.key} height={1} flexShrink={0} {...(selected ? {backgroundColor: theme.selection} : {})}>
 						<Text color={selected ? theme.accent : theme.muted}>{selected ? '▌' : ' '}</Text>
 						<Text color={theme.muted}>{'  '.repeat(item.depth) + (item.branch ? (item.open ? '▾ ' : '▸ ') : '  ')}</Text>
 						<Text color={theme.text} bold={selected} wrap="truncate-end">{item.node.label}</Text>

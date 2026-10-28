@@ -406,3 +406,94 @@ test('tree: two clicks in one read open a lazy branch and close it again, loadin
 	expect(app.lines()[0]).toBe('▌▸ remote');
 	await app.exit();
 });
+
+test('a Modal nested in another one is drawn over it and gets the keys, also when both open in the same commit', async () => {
+	const log: string[] = [];
+	function Nested({open}: {open: boolean}) {
+		const [outer, setOuter] = useState(open);
+		const [inner, setInner] = useState(open);
+		useKeys([{keys: 'o', desc: 'Open both', run: () => {
+			setOuter(true);
+			setInner(true);
+		}}]);
+		return (
+			<Shell title="n">
+				<Text>screen</Text>
+				{outer ? (
+					<Modal title="Setup" onClose={() => setOuter(false)} bindings={[{keys: 'y', desc: 'Outer', run: () => log.push('outer y')}]}>
+						<Text>setup body, wider than the login</Text>
+						{inner ? (
+							<Modal title="Login" onClose={() => setInner(false)} bindings={[{keys: 'x', desc: 'Inner', run: () => log.push('inner x')}]}>
+								<Text>login body</Text>
+							</Modal>
+						) : null}
+					</Modal>
+				) : null}
+			</Shell>
+		);
+	}
+	// Open at start (the Shell's layer is not there in the first commit), then opened by one key.
+	for (const open of [true, false]) {
+		log.length = 0;
+		const app = await headless(<Nested open={open} />, {cols: 60, rows: 16});
+		if (!open) await app.press('o');
+		expect(app.screen()).toContain('Login');
+		expect(app.screen()).toContain('login body');
+		await app.press('x');
+		expect(log).toEqual(['inner x']);
+		// Esc closes the dialog on top, the one you see.
+		await app.press('<Esc>');
+		expect(app.screen()).not.toContain('Login');
+		expect(app.screen()).toContain('setup body');
+		await app.press('y');
+		expect(log).toEqual(['inner x', 'outer y']);
+		await app.exit();
+	}
+});
+
+test('a Modal taller than the screen leaves the status line visible: mode, command line and messages', async () => {
+	const items = Array.from({length: 30}, (_, index) => `item${index}`);
+	function Tall() {
+		const [open, setOpen] = useState(true);
+		return (
+			<Shell title="t">
+				<Text>screen</Text>
+				{open ? <Modal title="Pick" onClose={() => setOpen(false)}><List items={items} text={item => item} render={item => <Text>{item}</Text>} /></Modal> : null}
+			</Shell>
+		);
+	}
+	const app = await headless(<Tall />, {cols: 60, rows: 14});
+	const bottom = () => app.lines()[13]!;
+	// The Modal (10 rows of list, 16 in all) is cut above the last row.
+	expect(app.screen()).toContain('item0');
+	expect(bottom()).toStartWith(' NORMAL  t');
+	await app.press('/item2');
+	expect(bottom()).toStartWith('/item2');
+	await app.press('<CR>');
+	expect(bottom()).toContain('Filter: item2');
+	await app.exit();
+});
+
+test('tree: onCursor reports a node rebuilt with a new label under the cursor, and does not loop on equal ones', async () => {
+	const seen: (string | undefined)[] = [];
+	let renders = 0;
+	function Renaming() {
+		const [label, setLabel] = useState('alpha');
+		const [, setLast] = useState<TreeNode | undefined>();
+		renders++;
+		const nodes: TreeNode[] = [{id: 'a', label}, {id: 'b', label: 'beta'}];
+		useKeys([{keys: 'R', desc: 'Rename', run: () => setLabel('ALPHA')}]);
+		return <Shell title="t"><Tree nodes={nodes} onCursor={node => {
+			seen.push(node?.label);
+			setLast(node);
+		}} /></Shell>;
+	}
+	const app = await headless(<Renaming />, {cols: 40, rows: 8});
+	expect(seen).toEqual(['alpha']);
+	await app.press('R');
+	expect(seen).toEqual(['alpha', 'ALPHA']);
+	const before = renders;
+	await app.settle(100);
+	expect(renders).toBe(before);
+	await app.exit();
+});

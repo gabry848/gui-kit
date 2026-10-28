@@ -10,11 +10,14 @@ import {theme} from './theme.js';
 const MODE_LABEL = {normal: 'NORMAL', insert: 'INSERT', command: 'COMMAND'} as const;
 
 /**
- * The Shell's layer for Modals: a box over the whole screen. A Modal draws
- * into it through a portal, so a Modal opened in a Split pane or a tab is
- * neither moved nor cut by that pane, and it stays where it is in the React
- * tree, with its state and the contexts around it. null until the Shell has
- * mounted; undefined outside a Shell, where a Modal draws in place.
+ * The layer a Modal draws into, through a portal: the Shell's box over the
+ * content area (the whole screen but the status line), or inside an open
+ * Modal a box drawn after it, for the Modals nested in it. So a Modal opened
+ * in a Split pane or a tab is neither moved nor cut by that pane, it stays
+ * where it is in the React tree, with its state and the contexts around it,
+ * and a nested Modal is always drawn over the one it is in, even when both
+ * open in the same commit. null until the layer's box has mounted; undefined
+ * outside a Shell, where a Modal draws in place.
  */
 const ModalLayer = createContext<DOMElement | null | undefined>(undefined);
 
@@ -46,13 +49,14 @@ export function Shell({title, hint, children}: {title: string; hint?: string; ch
 	return (
 		<ModalLayer.Provider value={layer}>
 			<Box flexDirection="column" width={columns} height={rows}>
-				<Box flexGrow={1} flexDirection="column" overflow="hidden">
+				{/* All the rows but the status line, whatever the content draws: content that does not fit is cut, it never pushes the status line out. */}
+				<Box flexGrow={1} flexShrink={1} flexBasis={0} minHeight={0} flexDirection="column" overflow="hidden">
 					{children}
 				</Box>
+				{/* Modals draw here: over the content, cut above the status line, under the key menu, the help and the toasts. */}
+				<Box ref={setLayer} position="absolute" top={0} left={0} width={columns} height={Math.max(0, rows - 1)} overflow="hidden" />
 				<StatusLine title={title} hint={hint} />
 				<WhichKey />
-				{/* Modals draw here, over the content and under the help and the toasts. */}
-				<Box ref={setLayer} position="absolute" top={0} left={0} width={columns} height={rows} />
 				{overlay === 'help' ? <Help onClose={() => setOverlay(undefined)} /> : null}
 				<Toasts />
 			</Box>
@@ -124,7 +128,7 @@ function StatusLine({title, hint}: {title: string; hint: string | undefined}) {
 	const state = useKeymapState();
 	if (state.cmdline) {
 		return (
-			<Box height={1}>
+			<Box height={1} flexShrink={0}>
 				<Text color={theme.modes.command}>{state.cmdline.prefix}</Text>
 				<Text color={theme.text}>{state.cmdline.text}</Text>
 				<Text inverse> </Text>
@@ -133,7 +137,7 @@ function StatusLine({title, hint}: {title: string; hint: string | undefined}) {
 	}
 	const pending = (state.count > 0 ? String(state.count) : '') + state.pending.join('');
 	return (
-		<Box height={1} overflow="hidden">
+		<Box height={1} flexShrink={0} overflow="hidden">
 			<Box flexShrink={0}>
 				<Text backgroundColor={theme.modes[state.mode]} color={theme.accentText} bold>
 					{` ${MODE_LABEL[state.mode]} `}
@@ -245,8 +249,9 @@ export function Overlay({title, children, width}: {title: string; children: Reac
 
 /**
  * A modal dialog: it takes the keys until it closes. Inside a Shell it is
- * drawn centered over the whole screen wherever it is rendered, a Split pane
- * or a tab included.
+ * drawn centered over the screen wherever it is rendered, a Split pane or a
+ * tab included, and cut above the status line. A Modal inside another one is
+ * drawn over it.
  */
 export function Modal({title, onClose, bindings = [], children}: {title: string; onClose: () => void; bindings?: Binding[]; children: ReactNode}) {
 	useKeys(
@@ -261,11 +266,23 @@ export function Modal({title, onClose, bindings = [], children}: {title: string;
 	const scope = useContext(KeyScope);
 	useMouseBarrier(scope + 20);
 	const layer = useContext(ModalLayer);
+	// Modals inside this one draw into a box that comes after its own, so
+	// they are on top of it whatever order React mounts them in.
+	const [nested, setNested] = useState<DOMElement | null>(null);
+	if (layer === undefined) {
+		return (
+			<KeyScope.Provider value={scope + 20}>
+				<Overlay title={title}>{children}</Overlay>
+			</KeyScope.Provider>
+		);
+	}
 	const content = (
 		<KeyScope.Provider value={scope + 20}>
-			<Overlay title={title}>{children}</Overlay>
+			<ModalLayer.Provider value={nested}>
+				<Overlay title={title}>{children}</Overlay>
+			</ModalLayer.Provider>
+			<Box ref={setNested} position="absolute" top={0} left={0} width="100%" height="100%" />
 		</KeyScope.Provider>
 	);
-	if (layer === undefined) return content;
 	return layer ? portal(content, layer) : null;
 }

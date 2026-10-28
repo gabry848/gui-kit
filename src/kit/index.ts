@@ -30,3 +30,4 @@ export {useGraphicsSuspend} from './graphics.js';
 
 export {Box, Newline, Spacer, Text, useWindowSize} from 'ink';
 export {createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react';
+export type {ProcessOptions} from './components/Process.js';

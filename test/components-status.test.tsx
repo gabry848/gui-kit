@@ -2,7 +2,7 @@ import {expect, test} from 'bun:test';
 import {existsSync, mkdtempSync, readFileSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
-import {Box, List, ProcessView, ProgressBar, Shell, Spinner, Text, useKeys, useNotify, useProcess, useState, type ProcessHandle} from '../src/kit/index.js';
+import {Box, List, ProcessView, ProgressBar, Shell, Spinner, Tabs, Text, useKeys, useNotify, useProcess, useState, type ProcessHandle} from '../src/kit/index.js';
 import {headless} from '../src/kit/testing.js';
 
 type App = Awaited<ReturnType<typeof headless>>;
@@ -447,3 +447,131 @@ test('process view: an app that exits right after unmounting still kills a group
 	await Bun.sleep(50);
 	expect(alive(sleeper)).toBe(false);
 }, 10_000);
+
+const groupAlive = (pgid: number) => {
+	try {
+		process.kill(-pgid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+};
+
+/** The calls process.kill gets for one process group while `body` runs; the checks (signal 0) only with `checks`. */
+async function groupSignals(pgid: number, body: () => Promise<void>, checks = false): Promise<unknown[][]> {
+	const calls: unknown[][] = [];
+	const original = process.kill;
+	process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+		if (pid === -pgid && (checks || signal !== 0)) calls.push([pid, signal]);
+		return original.call(process, pid, signal);
+	}) as typeof process.kill;
+	try {
+		await body();
+	} finally {
+		process.kill = original;
+	}
+	return calls;
+}
+
+test('useProcess: a group whose last process has ended is forgotten, so Ctrl-k, r and unmount never signal its pgid again', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'gui-kit-'));
+	// The leader exits at once and leaves a worker in its group, which ends 300 ms later.
+	const argv = ['sh', '-c', `sleep 0.3 >/dev/null 2>&1 & echo $$ > ${dir}/pid; echo leader`];
+	const app = await headless(<Toggle argv={argv} />, {cols: 60, rows: 8});
+	await until(app, 'exit 0');
+	const pgid = Number(readFileSync(join(dir, 'pid'), 'utf8'));
+	const end = Date.now() + 3000;
+	while (groupAlive(pgid) && Date.now() < end) await Bun.sleep(20);
+	expect(groupAlive(pgid)).toBe(false);
+	// One check of the watcher (every 500 ms) after the group is gone.
+	await app.settle(700);
+	const calls = await groupSignals(pgid, async () => {
+		await app.press('<C-k>');
+		await app.press('<C-k>');
+		await app.press('r');
+		await until(app, 'exit 0');
+		await app.press('u');
+		await app.settle(100);
+	}, true);
+	// Not signalled, not even checked: a program that gets this pid later is safe.
+	expect(calls).toEqual([]);
+	await app.exit();
+}, 10_000);
+
+test('useProcess: a stopped group that ends by itself before its SIGKILL is due gets no SIGKILL', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'gui-kit-'));
+	// Ignores SIGTERM and ends by itself 400 ms later.
+	const argv = ['sh', '-c', `trap '' TERM; echo $$ > ${dir}/pid; echo up; sleep 0.4`];
+	const app = await headless(<Toggle argv={argv} />, {cols: 60, rows: 8});
+	await until(app, 'up');
+	const pgid = Number(readFileSync(join(dir, 'pid'), 'utf8'));
+	const calls = await groupSignals(pgid, async () => {
+		await app.press('u');
+		// Past the two seconds after which a group still there gets SIGKILL.
+		await app.settle(2400);
+	});
+	expect(groupAlive(pgid)).toBe(false);
+	expect(calls).toEqual([[-pgid, 'SIGTERM']]);
+	await app.exit();
+}, 10_000);
+
+test('useProcess: onExit reports every run where the handle lives, also one that cannot start or ends in a hidden tab', async () => {
+	const exits: unknown[][] = [];
+	const order: string[] = [];
+	function Owner() {
+		const job = useProcess({onExit: (...args) => {
+			exits.push(args);
+			order.push('exit');
+		}});
+		useKeys([
+			{keys: 'M', desc: 'Missing', run: () => {
+				job.start(['gui-kit-no-such-command']);
+				order.push('after start');
+			}},
+			{keys: 'Y', desc: 'True', run: () => job.start(['true'])},
+			{keys: 'W', desc: 'Slow', run: () => job.start(['sh', '-c', 'sleep 0.2; exit 4'])},
+			{keys: 'L', desc: 'Long', run: () => job.start(['sleep', '30'])},
+			{keys: 'X', desc: 'Kill', run: () => job.kill()},
+		]);
+		return (
+			<Shell title="o">
+				<Tabs tabs={[
+					{id: 'run', title: 'Run', content: <ProcessView job={job} argv={['true']} />},
+					{id: 'other', title: 'Other', content: <Text>other tab</Text>},
+				]} />
+			</Shell>
+		);
+	}
+	const app = await headless(<Owner />, {cols: 60, rows: 8});
+	// It cannot start: reported all the same (watching `running` would miss it), after the caller's own code.
+	await app.press('M');
+	await app.settle(20);
+	expect(exits).toHaveLength(1);
+	expect(exits[0]!.slice(0, 2)).toEqual([null, null]);
+	expect(String(exits[0]![2])).toContain('gui-kit-no-such-command');
+	expect(order).toEqual(['after start', 'exit']);
+	await app.press('Y');
+	await until(app, 'exit 0');
+	expect(exits.at(-1)).toEqual([0, null]);
+	// The view is not mounted while the run ends.
+	await app.press('gt');
+	expect(app.screen()).toContain('other tab');
+	await app.press('W');
+	const end = Date.now() + 3000;
+	while (exits.length < 3 && Date.now() < end) await app.settle(20);
+	expect(exits.at(-1)).toEqual([4, null]);
+	// A run replaced before it ends is not reported; the one that replaced it is.
+	await app.press('L');
+	await app.settle(50);
+	await app.press('Y');
+	while (exits.length < 4 && Date.now() < end + 3000) await app.settle(20);
+	await app.settle(100);
+	expect(exits.slice(3)).toEqual([[0, null]]);
+	await app.press('L');
+	await app.settle(50);
+	await app.press('X');
+	while (exits.length < 5 && Date.now() < end + 6000) await app.settle(20);
+	expect(exits.at(-1)).toEqual([null, 'SIGTERM']);
+	expect(exits).toHaveLength(5);
+	await app.exit();
+}, 15_000);

@@ -19,8 +19,15 @@ type Props<T> = {
 	columns: Column<T>[];
 	rows: T[];
 	onOpen?: (row: T) => void;
-	/** The highlighted row each time it changes, sorting included, as List's onCursor; undefined when none is. */
+	/**
+	 * The highlighted row each time it changes, sorting included, as List's
+	 * onCursor; undefined when none is. A row counts as the same while its
+	 * position and its own string, number and boolean fields stay the same
+	 * (columns or not), or with `id`, while its position and id do.
+	 */
 	onCursor?: (row: T | undefined) => void;
+	/** What makes a row itself, e.g. `p => p.pid`, for onCursor; as List's `id`. */
+	id?: (row: T) => string | number;
 	active?: boolean;
 };
 
@@ -31,7 +38,7 @@ function fit(text: string, width: number, align: 'left' | 'right', last = false)
 }
 
 /** Rows and columns with a header; `s` sorts by the next column, `S` flips the order. */
-export function Table<T extends object>({columns, rows, onOpen, onCursor, active = true}: Props<T>) {
+export function Table<T extends object>({columns, rows, onOpen, onCursor, id, active = true}: Props<T>) {
 	const [sort, setSort] = useState<{column: number; descending: boolean} | undefined>();
 	const cell = (row: T, column: Column<T>) => {
 		const format = column.format as ((value: unknown, row: T) => string) | undefined;
@@ -78,6 +85,7 @@ export function Table<T extends object>({columns, rows, onOpen, onCursor, active
 				active={active}
 				{...(onOpen ? {onOpen} : {})}
 				{...(onCursor ? {onCursor} : {})}
+				{...(id ? {id} : {})}
 				render={(row, selected) => (
 					<Box>
 						{columns.map((column, index) => (

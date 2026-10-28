@@ -465,3 +465,84 @@ test('mouse: wheel reports that arrive in one read each scroll from the previous
 	expect(pager.lines()[0]).toBe('line 16');
 	await pager.exit();
 });
+
+test('onCursor: another item with the same text under the cursor is reported, in List, Table and Select', async () => {
+	type Proc = {name: string; pid: number};
+	const one: Proc = {name: 'node', pid: 1};
+	const two: Proc = {name: 'node', pid: 2};
+	const pids: (number | undefined)[] = [];
+	function Procs() {
+		const [rows, setRows] = useState([one, two]);
+		const [selected, setSelected] = useState<Proc | undefined>();
+		useKeys([{keys: 'R', desc: 'Reorder', run: () => setRows([{...two}, {...one}])}]);
+		return (
+			<Shell title="p">
+				<Text>{`sel ${selected?.pid}`}</Text>
+				<List items={rows} text={proc => proc.name} render={proc => <Text>{`${proc.name} ${proc.pid}`}</Text>} onCursor={proc => {
+					pids.push(proc?.pid);
+					setSelected(proc);
+				}} />
+			</Shell>
+		);
+	}
+	const list = await headless(<Procs />, {cols: 40, rows: 8});
+	expect(pids).toEqual([1]);
+	await list.press('R');
+	expect(pids).toEqual([1, 2]);
+	expect(list.screen()).toContain('sel 2');
+	// Rebuilt with the same fields on every render: no loop.
+	const before = pids.length;
+	await list.settle(100);
+	expect(pids).toHaveLength(before);
+	await list.exit();
+
+	// The pid is not a column, so the row's text is the same.
+	const tablePids: (number | undefined)[] = [];
+	function ProcTable() {
+		const [rows, setRows] = useState([one, two]);
+		useKeys([{keys: 'R', desc: 'Reorder', run: () => setRows([two, one])}]);
+		return <Shell title="t"><Table<Proc> columns={[{key: 'name', title: 'Name'}]} rows={rows} onCursor={row => tablePids.push(row?.pid)} /></Shell>;
+	}
+	const table = await headless(<ProcTable />, {cols: 40, rows: 8});
+	await table.press('R');
+	expect(tablePids).toEqual([1, 2]);
+	await table.exit();
+
+	// Values that are objects: by the value's own fields, or by `id`.
+	for (const id of [undefined, (value: {proc: Proc}) => value.proc.pid]) {
+		const values: (number | undefined)[] = [];
+		function ProcSelect() {
+			const [options, setOptions] = useState([{label: 'node', value: {proc: one}}, {label: 'node', value: {proc: two}}]);
+			useKeys([{keys: 'R', desc: 'Reorder', run: () => setOptions(current => [current[1]!, current[0]!])}]);
+			return <Shell title="s"><Select options={options} onSelect={() => {}} onCursor={value => values.push(value?.proc.pid)} {...(id ? {id} : {})} /></Shell>;
+		}
+		const select = await headless(<ProcSelect />, {cols: 40, rows: 8});
+		await select.press('R');
+		// Without id, nested objects are not looked into: same label, no field of its own.
+		expect(values).toEqual(id ? [1, 2] : [1]);
+		await select.exit();
+	}
+});
+
+test('list: with id, an item is the same while its id is, whatever its other fields', async () => {
+	type Job = {name: string; id: number; started: number; proc: {pid: number}};
+	const seen: (number | undefined)[] = [];
+	let stamp = 0;
+	function Jobs() {
+		const [jobs, setJobs] = useState<Job[]>([{name: 'build', id: 1, started: 0, proc: {pid: 10}}, {name: 'build', id: 2, started: 0, proc: {pid: 20}}]);
+		const [, setPicked] = useState<Job | undefined>();
+		// A field that changes on every render would report on every render without id.
+		const items = jobs.map(job => ({...job, started: ++stamp}));
+		useKeys([{keys: 'R', desc: 'Reorder', run: () => setJobs(current => [current[1]!, current[0]!])}]);
+		return <Shell title="j"><List items={items} id={job => job.id} text={job => job.name} render={job => <Text>{job.name}</Text>} onCursor={job => {
+			seen.push(job?.proc.pid);
+			setPicked(job);
+		}} /></Shell>;
+	}
+	const app = await headless(<Jobs />, {cols: 40, rows: 8});
+	await app.settle(100);
+	expect(seen).toEqual([10]);
+	await app.press('R');
+	expect(seen).toEqual([10, 20]);
+	await app.exit();
+});
