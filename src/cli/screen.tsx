@@ -1,6 +1,6 @@
 // Child process for `gui screen`: renders an app in a virtual terminal,
 // types the keys and prints what the screen shows, without a real terminal.
-// After the screen it prints `[finish] <json>` or `[uscita]` when the app
+// After the screen it prints `[finish] <json>`, or `[exit]` when the app
 // ended; an app that crashed exits 1 with the error on stderr.
 // usage: screen.tsx <file> <keys> <cols> <rows>
 
@@ -17,7 +17,7 @@ import {headless} from 'gui-kit/testing';
 const [file, keys = '', cols = '100', rows = '30'] = process.argv.slice(2);
 const {default: App} = (await import(pathToFileURL(file!).href)) as {default?: ComponentType};
 if (typeof App !== 'function') {
-	console.error(`${file}: l'app deve esportare di default il suo componente`);
+	console.error(`${file}: the app must default-export its component`);
 	process.exit(2);
 }
 
@@ -38,11 +38,11 @@ process.stdout.write(lines.join('\n') + '\n');
 const result = app.result();
 const error = app.error();
 if (result) process.stdout.write(`\n[finish] ${JSON.stringify(result.value)}\n`);
-else if (app.exited() && !error) process.stdout.write('\n[uscita] l\'app si è chiusa senza finish()\n');
+else if (app.exited() && !error) process.stdout.write('\n[exit] the app quit without finish()\n');
 await app.exit();
 if (error) {
 	// Under Bun the stack of an error thrown in a key handler starts with a bare "Error".
-	console.error(error instanceof Error ? `[errore] ${error.message}\n${error.stack ?? ''}` : `[errore] ${String(error)}`);
+	console.error(error instanceof Error ? `[error] ${error.message}\n${error.stack ?? ''}` : `[error] ${String(error)}`);
 	process.exit(1);
 }
 process.exit(0);

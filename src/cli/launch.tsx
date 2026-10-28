@@ -11,7 +11,7 @@ const [mode, file] = process.argv.slice(2);
 const module = (await import(pathToFileURL(file!).href)) as {default?: ComponentType};
 const App = module.default;
 if (typeof App !== 'function') {
-	console.error(`${file}: l'app deve esportare di default il suo componente (export default function App() {...})`);
+	console.error(`${file}: the app must default-export its component (export default function App() {...})`);
 	process.exit(2);
 }
 
