@@ -114,7 +114,7 @@ export function TasksTab({cwd, job, run, onRun}: Props) {
 					<Box flexShrink={0}><Status job={job} /></Box>
 				</Box>
 				{/* A new Pager for each run, so it follows the end again. */}
-				<Pager key={run.id} text={job.lines} follow ansi active={active} />
+				<Pager key={run.id} text={job.lines} offset={job.dropped} follow ansi active={active} />
 			</Box>
 		);
 	};

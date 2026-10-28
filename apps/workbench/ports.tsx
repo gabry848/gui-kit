@@ -1,9 +1,8 @@
 // Ports: who listens on which TCP port, and dd to stop one with SIGTERM.
 
-import {Box, Confirm, Text, theme, useEffect, useKeys, useNotify, useRef, useState, type Column} from 'gui-kit';
+import {Box, Confirm, Table, Text, theme, useEffect, useKeys, useNotify, useRef, useState, type Column} from 'gui-kit';
 import {exec, firstLine} from './exec.js';
 import {parseLsof, type Port} from './parse.js';
-import {CursorTable} from './table.js';
 
 /** Where the ports come from and how a process is stopped; tests pass fakes. */
 export type PortSource = {
@@ -107,7 +106,7 @@ export function PortsTab({source}: {source: PortSource}) {
 			{error ? <Text color={theme.danger}>{`Cannot list ports: ${error}`}</Text>
 				: !ports ? <Text color={theme.muted}>Reading ports…</Text>
 				: ports.length === 0 ? <Text color={theme.muted}>Nothing listens on TCP.</Text>
-				: <CursorTable columns={COLUMNS} rows={ports} onCursor={setSelected} active={!asking} />}
+				: <Table columns={COLUMNS} rows={ports} onCursor={setSelected} active={!asking} />}
 		</Box>
 	);
 }

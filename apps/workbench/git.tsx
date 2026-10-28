@@ -3,10 +3,9 @@
 
 import {existsSync} from 'node:fs';
 import {dirname, join} from 'node:path';
-import {Box, Pager, Split, Text, theme, useEffect, useKeys, useRef, useState, type Column} from 'gui-kit';
+import {Box, Pager, Split, Table, Text, theme, useEffect, useKeys, useRef, useState, type Column} from 'gui-kit';
 import {exec, firstLine, type Result} from './exec.js';
 import {describeBranch, parseStatus, type Branch, type GitEntry} from './parse.js';
-import {CursorTable} from './table.js';
 
 /** git without optional locks (status would refresh the index), pagers or ext diffs, in English. */
 export function git(args: string[], cwd: string, maxBytes?: number): Promise<Result> {
@@ -140,7 +139,7 @@ export function GitTab({cwd}: {cwd: string}) {
 				panes={[
 					active => (repo.entries.length === 0
 						? <Text color={theme.success}>Nothing to commit, working tree clean.</Text>
-						: <CursorTable columns={COLUMNS} rows={repo.entries} onCursor={setSelected} active={active} />),
+						: <Table columns={COLUMNS} rows={repo.entries} onCursor={setSelected} active={active} />),
 					active => (!diff ? <Text color={theme.muted}>{selected ? 'Loading diff…' : 'No file selected.'}</Text> : (
 						<Box flexDirection="column" flexGrow={1}>
 							<Box height={1} flexShrink={0} gap={2}>
