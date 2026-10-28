@@ -205,10 +205,11 @@ export function sandboxProfile(grant: Grant, places: Places): string | undefined
 		'(allow default)',
 		// Reading inside your home is limited to what the app needs and declares.
 		`(deny file-read-data (subpath ${quote(home)}))`,
-		// So is reading GUI_HOME (the registry, other apps' data) wherever it is; the next line
-		// reopens the app's own data folder and the kit copy it runs on (GUI_HOME/kits/<version>).
-		`(deny file-read-data ${subpaths([places.gui])})`,
 		`(allow file-read-data ${subpaths([places.app, places.kit, places.data, bunHome, ...read, ...write, ...gitConfig])} ${literals(startFolder)})`,
+		// GUI_HOME (the registry, other apps' data, the scratch folder) stays closed wherever it is,
+		// even under a grant that covers it such as read ~, apart from the app's own data and kit copy.
+		`(deny file-read-data ${subpaths([places.gui])})`,
+		`(allow file-read-data ${subpaths([places.data, places.kit])})`,
 		'(deny file-write*)',
 		`(allow file-write* (subpath "/dev") ${subpaths(temp)})`,
 		// A home, GUI_HOME or kit inside a temp folder (as in tests) is no more writable than a real one.
@@ -217,10 +218,17 @@ export function sandboxProfile(grant: Grant, places: Places): string | undefined
 	// A temp folder inside your home (TMPDIR=~/tmp) stays writable.
 	const reopened = temp.filter(path => isInside(path, home) && path !== home);
 	lines.push(`(allow file-write* ${subpaths([...reopened, places.data, ...write])})`);
+	// Not even write ~ reaches GUI_HOME or the kit: an app must not edit the registry
+	// to approve itself, nor the code the CLI runs outside the sandbox.
+	lines.push(`(deny file-write* ${subpaths([places.gui, places.kit])})`);
+	lines.push(`(allow file-write* ${subpaths([places.data])})`);
 	// Bun reads these from the folder a program starts in, and a tsconfig's paths
 	// or a bunfig preload run code in whatever starts there next, a full-access
-	// app included. No app may create or change them, even where it may write.
-	lines.push('(deny file-write* (regex #"/(tsconfig|jsconfig)\\.json$" #"/bunfig\\.toml$" #"/\\.env(\\.[^/]*)?$"))');
+	// app included. No app may create or change them, even where it may write;
+	// tsconfig.base.json and the like are the usual targets of "extends". The
+	// sandbox matches resolved paths, so a config that is a symlink to another
+	// name is not covered.
+	lines.push('(deny file-write* (regex #"/(tsconfig|jsconfig)[^/]*\\.json$" #"/bunfig\\.toml$" #"/\\.env(\\.[^/]*)?$"))');
 	// No filter: false blocks every socket, listening ones included (TCP and unix), unix sockets
 	// such as ssh-agent or docker.sock and DNS through mDNSResponder.
 	if (grant.net !== true) {

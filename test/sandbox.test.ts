@@ -236,3 +236,28 @@ test.skipIf(!darwin)('an app may not create or change the files Bun reads from a
 	const screen = await cli(['screen', app, '--cols', '200', '--rows', '6'], project);
 	expect(screen.stdout).toContain('tsconfig.json=EPERM jsconfig.json=EPERM bunfig.toml=EPERM .env=EPERM .env.local=EPERM notes.json=ok');
 }, 60_000);
+
+test.skipIf(!darwin)('a grant that covers GUI_HOME or the kit, such as write ~, still cannot read or change the registry, other apps\' data or the kit', async () => {
+	const kit = realpathSync(join(import.meta.dir, '..'));
+	const kitFile = join(kit, `.sandbox-kit-write-${process.pid}`);
+	mkdirSync(join(guiHome, 'data', 'other'), {recursive: true});
+	writeFileSync(join(guiHome, 'data', 'other', 'secret.txt'), 'other-secret');
+	writeFileSync(join(guiHome, 'probe-registry.json'), '{}');
+	const app = join(home, 'apps', 'greedy');
+	writeApp(app, {name: 'greedy', entry: 'app.tsx', permissions: {read: ['~'], write: ['~', kit]}}, probeApp('',
+		`[
+			'registry=' + attempt(() => readFileSync(${JSON.stringify(join(guiHome, 'probe-registry.json'))}, 'utf8')),
+			'tamper=' + attempt(() => writeFileSync(${JSON.stringify(join(guiHome, 'probe-registry.json'))}, '{"apps": {}}')),
+			'other=' + attempt(() => readFileSync(${JSON.stringify(join(guiHome, 'data', 'other', 'secret.txt'))}, 'utf8')),
+			'kit=' + attempt(() => writeFileSync(${JSON.stringify(kitFile)}, 'x')),
+			'own=' + attempt(() => writeFileSync(process.env.GUI_DATA_DIR + '/state.json', '{}')),
+			'home=' + attempt(() => writeFileSync(${JSON.stringify(join(home, 'greedy-home.txt'))}, 'x')),
+		].join(' ')`,
+	));
+	try {
+		const screen = await cli(['screen', app, '--cols', '200', '--rows', '6']);
+		expect(screen.stdout).toContain('registry=EPERM tamper=EPERM other=EPERM kit=EPERM own=ok home=ok');
+	} finally {
+		rmSync(kitFile, {force: true});
+	}
+}, 60_000);
