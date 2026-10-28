@@ -83,7 +83,7 @@ Everything lives in `${XDG_DATA_HOME:-~/.local/share}/gui` (`GUI_HOME` moves it)
 | `net` | `false` (no sockets at all, no DNS), `"local"` (connections out to localhost only, no listening) or `true`. |
 | `run` | Command names it may run, such as `git`, or `"*"` for any. Programs it starts stay in the sandbox. With `git` or `"*"` it may also read `~/.gitconfig` and `~/.config/git`. |
 
-Paths may start with `$CWD` (the folder `gui` was started in), `$REPO` (the git work tree containing `$CWD`), `$APP`, `$DATA`, `$HOME`, `$TMP` or `~`. An app without a `"permissions"` field has full access. Sandboxed apps never see the variables of a `.env` file, never read the registry or other apps' data, and may not create or change `tsconfig.json`, `jsconfig.json`, `bunfig.toml` or `.env` files anywhere, because Bun would run code from them in the next program started in that folder; `gui` itself never loads a start folder's `bunfig.toml`.
+Paths may start with `$CWD` (the folder `gui` was started in), `$REPO` (the git work tree containing `$CWD`), `$APP`, `$DATA`, `$HOME`, `$TMP` or `~`. An app without a `"permissions"` field has full access. Sandboxed apps never see the variables of a `.env` file, never read or change the registry, other apps' data or the kit (not even under `write: ["~"]`), and may not create or change files named `tsconfig*.json`, `jsconfig*.json`, `bunfig.toml` or `.env*`, because Bun would run code from them in the next program started in that folder; `gui` itself never loads a start folder's `bunfig.toml` or `tsconfig.json`. Only those names are covered: `write` on a folder still lets an app leave code that runs later there (git hooks, `package.json` scripts), so grant it only to apps you trust with that folder.
 
 `gui install` lists what an app asks for and needs your yes; without a terminal it needs `--yes`, which an agent should pass only after you agreed. Reinstalling with the same permissions asks nothing; an installed app whose `gui.json` later asks for more, changes its name or leaves its `"kit"` range stops until you install it again, whether you start it by name, by folder or by its entry file.
 
@@ -110,7 +110,7 @@ An app file default-exports its root component and imports everything from `'gui
 ## Known issues
 
 - Ghostty 1.3.1 crashes on some valid zlib payloads sent with kitty `o=z` (see [`bench/ghostty-zlib-crash.md`](bench/ghostty-zlib-crash.md)); it is fixed on Ghostty's main branch for 1.4. The kit sends PNG instead, and kitty graphics stay opt-in on Ghostty 1.3.x.
-- Sixel output is tested against a decoder, not yet in a real sixel terminal.
+- Sixel output is tested against a decoder, not yet in a real sixel terminal. Erasing a sixel image resets the background of the cells it covered, so an image inside a `Modal` can leave holes in the dialog's background when it changes.
 - Permissions are enforced only on macOS.
 - Under Bun, packages found through `NODE_PATH` ignore `package.json` `exports`, so the kit uses `main` and the `testing.ts` file for `gui-kit/testing`.
 
