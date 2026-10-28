@@ -4,7 +4,7 @@
 
 import {existsSync, realpathSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
-import {isAbsolute, join, resolve} from 'node:path';
+import {basename, dirname, isAbsolute, join, relative, resolve} from 'node:path';
 
 export type Permissions = {
 	/** Folders or files the app may read inside your home, besides its own folder and data. */
@@ -72,6 +72,17 @@ export function covers(approved: Grant | undefined, requested: Grant): boolean {
 		&& Boolean(runOk);
 }
 
+/** True when the app may run git: then it may also read git's own config in your home. */
+function runsGit(grant: Permissions): boolean {
+	return Boolean(grant.run?.includes('git') || grant.run?.includes('*'));
+}
+
+/** The config files git reads in your home: ~/.gitconfig and the git folder of XDG_CONFIG_HOME (~/.config/git). */
+function gitConfigPaths(): string[] {
+	const home = homedir();
+	return [join(home, '.gitconfig'), join(process.env['XDG_CONFIG_HOME'] || join(home, '.config'), 'git')];
+}
+
 export function describe(grant: Grant): string[] {
 	if (grant === 'full') return ['full access: it declares no permissions, so it can do anything you can'];
 	if (isBaseline(grant)) return ['nothing beyond its own folder, its data folder and the terminal'];
@@ -80,28 +91,58 @@ export function describe(grant: Grant): string[] {
 	if (grant.write) lines.push(`write  ${grant.write.join(', ')}`);
 	if (grant.net) lines.push(`net    ${grant.net === 'local' ? 'localhost only' : 'any host'}`);
 	if (grant.run) lines.push(`run    ${grant.run.includes('*') ? 'any command' : grant.run.join(', ')}`);
+	if (runsGit(grant)) lines.push('read   ~/.gitconfig, ~/.config/git (git reads its config there)');
 	return lines;
 }
 
-export type Places = {app: string; kit: string; data: string; cwd: string};
+/** The folders a sandbox profile is built from; `gui` is GUI_HOME (registry, kit copies, data). */
+export type Places = {app: string; kit: string; data: string; cwd: string; gui: string};
 
-/** `$CWD`, `$APP`, `$DATA`, `$HOME`, `$TMP` and `~` expand; other relative paths are inside the app folder. */
+/** The git work tree that holds `dir`: the nearest folder with a `.git` entry, or `dir` when there is none. */
+export function repoRoot(dir: string): string {
+	for (let current = resolve(dir); ; current = dirname(current)) {
+		if (existsSync(join(current, '.git'))) return current;
+		if (dirname(current) === current) return resolve(dir);
+	}
+}
+
+/**
+ * Expands a path from gui.json. Variables, only at the start of the path:
+ * - `$CWD`: the folder gui was started in;
+ * - `$REPO`: the git work tree that holds `$CWD` (the nearest folder above it
+ *   with a `.git`), or `$CWD` itself when it is not in a repository;
+ * - `$APP`: the app folder; `$DATA`: its data folder;
+ * - `$HOME` or `~`: your home; `$TMP`: the temp folder.
+ * Any other relative path is inside the app folder. The result is resolved
+ * (symlinks followed), as the sandbox matches resolved paths.
+ */
 export function expandPath(entry: string, places: Places): string {
 	const home = homedir();
+	const variables: Record<string, () => string> = {CWD: () => places.cwd, REPO: () => repoRoot(places.cwd), APP: () => places.app, DATA: () => places.data, HOME: () => home, TMP: () => tmpdir()};
 	let path = entry
 		.replace(/^~(?=\/|$)/, home)
-		.replace(/^\$(CWD|APP|DATA|HOME|TMP)(?=\/|$)/, (_, name: string) => ({CWD: places.cwd, APP: places.app, DATA: places.data, HOME: home, TMP: tmpdir()})[name]!);
+		.replace(/^\$(CWD|REPO|APP|DATA|HOME|TMP)(?=\/|$)/, (_, name: string) => variables[name]!());
 	if (!isAbsolute(path)) path = resolve(places.app, path);
 	return real(path);
 }
 
-/** The sandbox matches resolved paths: /tmp is /private/tmp on macOS. */
-function real(path: string): string {
+/**
+ * The resolved path, as the sandbox matches it: /tmp is /private/tmp on macOS.
+ * For a path that does not exist yet, its nearest existing folder is resolved.
+ */
+export function real(path: string): string {
 	try {
 		return realpathSync(path);
 	} catch {
-		return path;
+		const parent = dirname(path);
+		return parent === path ? path : join(real(parent), basename(path));
 	}
+}
+
+/** True when `path` is `folder` or inside it. */
+export function isInside(path: string, folder: string): boolean {
+	const rel = relative(folder, path);
+	return rel === '' || (rel !== '..' && !rel.startsWith('../') && !isAbsolute(rel));
 }
 
 function quote(path: string): string {
@@ -134,17 +175,34 @@ export function sandboxProfile(grant: Grant, places: Places): string | undefined
 	const write = expand(grant.write);
 	const bun = [process.execPath, real(process.execPath)];
 	const bunHome = join(home, '.bun');
+	const cwd = real(places.cwd);
+	const temp = [real(tmpdir()), '/private/tmp', '/private/var/folders'];
+	const subpaths = (paths: string[]) => [...new Set(paths.map(path => `(subpath ${quote(real(path))})`))].join(' ');
+	const literals = (paths: string[]) => [...new Set(paths.map(path => `(literal ${quote(path)})`))].join(' ');
+	// Bun lists the folder it starts in and reads its package.json and tsconfig.json
+	// (jsconfig.json without one); it cannot start when that listing is denied.
+	// The app may list that folder, but not read other files in it. Its bunfig.toml
+	// stays unreadable, which Bun skips quietly, and the parent runs Bun with
+	// --no-env-file, so it never reads a .env there.
+	const startFolder = [cwd, ...['package.json', 'tsconfig.json', 'jsconfig.json'].map(name => join(cwd, name))];
+	const gitConfig = runsGit(grant) ? gitConfigPaths().map(real) : [];
 	const lines = [
 		'(version 1)',
 		'(allow default)',
 		// Reading inside your home is limited to what the app needs and declares.
 		`(deny file-read-data (subpath ${quote(home)}))`,
-		`(allow file-read-data ${[places.app, places.kit, places.data, bunHome, ...read, ...write].map(path => `(subpath ${quote(real(path))})`).join(' ')})`,
+		`(allow file-read-data ${subpaths([places.app, places.kit, places.data, bunHome, ...read, ...write, ...gitConfig])} ${literals(startFolder)})`,
 		'(deny file-write*)',
-		`(allow file-write* (subpath "/dev") (subpath ${quote(real(tmpdir()))}) (subpath "/private/tmp") (subpath "/private/var/folders") ${[places.data, ...write].map(path => `(subpath ${quote(real(path))})`).join(' ')})`,
+		`(allow file-write* (subpath "/dev") ${subpaths(temp)})`,
+		// A home, GUI_HOME or kit inside a temp folder (as in tests) is no more writable than a real one.
+		`(deny file-write* ${subpaths([home, places.gui, places.kit])})`,
 	];
+	// A temp folder inside your home (TMPDIR=~/tmp) stays writable.
+	const reopened = temp.filter(path => isInside(path, home) && path !== home);
+	lines.push(`(allow file-write* ${subpaths([...reopened, places.data, ...write])})`);
+	// No filter: false also blocks unix sockets (ssh-agent, docker.sock) and DNS through mDNSResponder.
 	if (grant.net !== true) {
-		lines.push('(deny network-outbound (remote ip))');
+		lines.push('(deny network-outbound)');
 		if (grant.net === 'local') lines.push('(allow network-outbound (remote ip "localhost:*"))');
 	}
 	if (!grant.run?.includes('*')) {

@@ -3,7 +3,7 @@
 import {existsSync, mkdirSync, readFileSync, statSync, writeFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
-import {parsePermissions, type Grant} from './permissions.js';
+import {parsePermissions, real, type Grant} from './permissions.js';
 
 export type Manifest = {
 	name: string;
@@ -44,11 +44,15 @@ export function saveRegistry(apps: Record<string, Installed>) {
 	writeFileSync(REGISTRY, JSON.stringify({apps}, null, '\t') + '\n');
 }
 
+/** An app name: it names the data folder GUI_HOME/data/<name>, so it can never hold `/` or `..`. */
+export const NAME = /^[a-z0-9][a-z0-9-]*$/;
+
 export function readManifest(dir: string): Manifest | undefined {
 	const file = join(dir, 'gui.json');
 	if (!existsSync(file)) return undefined;
 	const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
 	if (typeof raw['name'] !== 'string' || typeof raw['entry'] !== 'string') throw new Error(`${file}: needs "name" and "entry"`);
+	if (!NAME.test(raw['name'])) throw new Error(`${file}: "name" uses only lowercase letters, digits and dashes`);
 	if (raw['kit'] !== undefined && (typeof raw['kit'] !== 'string' || raw['kit'].trim() === '')) throw new Error(`${file}: "kit" must be a semver range like "^0.1.0"`);
 	return {
 		name: raw['name'],
@@ -83,8 +87,40 @@ export function resolveTarget(arg: string): Target {
 	if (existsSync(path) && statSync(path).isDirectory()) {
 		const manifest = readManifest(path);
 		if (!manifest) throw new Error(`${arg}: the folder has no gui.json`);
-		return {file: join(path, manifest.entry), name: manifest.name, dir: path, manifest};
+		return project(apps, path, manifest);
 	}
-	if (existsSync(path)) return {file: path, dir: dirname(path)};
+	if (existsSync(path)) {
+		// The entry file of a project is that project: the same kit, gui.json and sandbox.
+		const dir = dirname(path);
+		if (entryOf(dir) === real(path)) return project(apps, dir, readManifest(dir)!);
+		return {file: path, dir};
+	}
 	throw new Error(`${arg}: not an installed app, a folder with gui.json or a file. \`gui ls\` lists the apps.`);
+}
+
+/** A project folder; when it is installed, the installed app, so its approval and kit apply. */
+function project(apps: Record<string, Installed>, dir: string, manifest: Manifest): Target {
+	const target: Target = {file: join(dir, manifest.entry), name: manifest.name, dir, manifest};
+	const name = installedAt(apps, dir, manifest.name);
+	return name ? {...target, name, installed: apps[name]!} : target;
+}
+
+/** The name an app is installed under from `dir`, preferring `name` when the folder is installed under several. */
+export function installedAt(apps: Record<string, Installed>, dir: string, name?: string): string | undefined {
+	const here = real(dir);
+	const names = Object.keys(apps).filter(key => real(apps[key]!.path) === here);
+	return name && names.includes(name) ? name : names[0];
+}
+
+/** The resolved entry file a folder's gui.json names, if it has one. */
+function entryOf(dir: string): string | undefined {
+	const file = join(dir, 'gui.json');
+	if (!existsSync(file)) return undefined;
+	try {
+		const raw = JSON.parse(readFileSync(file, 'utf8')) as {entry?: unknown};
+		return typeof raw.entry === 'string' ? real(resolve(dir, raw.entry)) : undefined;
+	} catch {
+		// Not a gui.json of ours: the file is a single-file app.
+		return undefined;
+	}
 }

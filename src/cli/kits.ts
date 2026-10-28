@@ -10,7 +10,7 @@
 // variables must stay the same across versions.
 
 import {cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync} from 'node:fs';
-import {join, relative, resolve} from 'node:path';
+import {dirname, join, relative, resolve} from 'node:path';
 import {GUI_HOME} from './registry.js';
 
 export const KIT = resolve(import.meta.dir, '..', '..');
@@ -96,6 +96,17 @@ function kitAt(dir: string): Kit | undefined {
 export function linkedKit(project: string): Kit | undefined {
 	const link = join(project, 'node_modules', 'gui-kit');
 	return existsSync(link) ? kitAt(realpathSync(link)) : undefined;
+}
+
+/**
+ * The kit a file in `dir` imports as 'gui-kit': Bun looks in node_modules of
+ * that folder and of each folder above it before NODE_PATH, so the nearest link wins.
+ */
+export function nearestLinkedKit(dir: string): Kit | undefined {
+	for (let current = resolve(dir); ; current = dirname(current)) {
+		if (existsSync(join(current, 'node_modules', 'gui-kit'))) return linkedKit(current);
+		if (dirname(current) === current) return undefined;
+	}
 }
 
 /** Points a project's node_modules at `kit`, replacing only links gui made. */

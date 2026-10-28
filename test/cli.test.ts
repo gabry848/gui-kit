@@ -1,7 +1,8 @@
 import {afterAll, expect, test} from 'bun:test';
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {expandPath} from '../src/cli/permissions.js';
 
 // The CLI runs with a throwaway HOME so it never touches the real registry.
 const home = mkdtempSync(join(tmpdir(), 'gui-cli-test-'));
@@ -11,10 +12,14 @@ const gui = join(kit, 'bin', 'gui');
 const version = (JSON.parse(readFileSync(join(kit, 'package.json'), 'utf8')) as {version: string}).version;
 afterAll(() => rmSync(home, {recursive: true, force: true}));
 
-async function cli(args: string[], env: Record<string, string> = {}) {
-	const proc = Bun.spawn([gui, ...args], {cwd: home, env: {...process.env, HOME: home, GUI_HOME: guiHome, ...env}, stdout: 'pipe', stderr: 'pipe'});
+async function cli(args: string[], env: Record<string, string> = {}, cwd = home) {
+	const proc = Bun.spawn([gui, ...args], {cwd, env: {...process.env, HOME: home, GUI_HOME: guiHome, ...env}, stdout: 'pipe', stderr: 'pipe'});
 	const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
 	return {stdout, stderr, code};
+}
+
+function registry(): Record<string, {path: string; kit?: string}> {
+	return (JSON.parse(readFileSync(join(guiHome, 'registry.json'), 'utf8')) as {apps: Record<string, {path: string; kit?: string}>}).apps;
 }
 
 function writeApp(dir: string, manifest: object, source: string) {
@@ -246,4 +251,122 @@ test('scratch files, keep and gc', async () => {
 	expect(existsSync(first)).toBe(false);
 	// Kit copies stay while an installed app uses them.
 	expect(existsSync(join(guiHome, 'kits', version))).toBe(true);
+}, 60_000);
+
+test('a gui.json name that could leave the data folder is refused, and so is an installed app renamed in gui.json', async () => {
+	// GUI_HOME/data/../../escaped would be HOME/escaped, granted read and write.
+	writeApp(join(home, 'escape'), {name: '../../escaped', entry: 'app.tsx', permissions: {}}, SHOW_ENV);
+	const escaped = await cli(['screen', './escape', '--rows', '6']);
+	expect(escaped.code).toBe(2);
+	expect(escaped.stderr).toContain('"name" uses only lowercase letters');
+	expect(existsSync(join(home, 'escaped'))).toBe(false);
+	expect((await cli(['install', join(home, 'escape')])).code).toBe(2);
+
+	const dir = join(home, 'renamed');
+	writeApp(dir, {name: 'renamed', entry: 'app.tsx', permissions: {}}, SHOW_ENV);
+	expect((await cli(['install', dir])).code).toBe(0);
+	writeFileSync(join(dir, 'gui.json'), JSON.stringify({name: 'someone-else', entry: 'app.tsx', permissions: {}}));
+	for (const target of ['renamed', dir, join(dir, 'app.tsx')]) {
+		const run = await cli(['screen', target, '--rows', '6']);
+		expect(run.code).toBe(2);
+		expect(run.stderr).toContain('now calls it "someone-else"');
+	}
+	expect(existsSync(join(guiHome, 'data', 'someone-else'))).toBe(false);
+}, 60_000);
+
+test('the entry file of a saved app runs as that app; another file uses the kit its folder links', async () => {
+	const dir = join(home, 'entryfile');
+	writeApp(dir, {name: 'entryfile', entry: 'app.tsx', kit: `^${version}`, permissions: {}}, SHOW_ENV);
+	expect((await cli(['install', dir])).code).toBe(0);
+	const pinnedRuntime = join(guiHome, 'kits', version, 'runtime', 'node_modules');
+	// Before, the file ran on this kit while its imports came from the linked copy: two Reacts.
+	const check = await cli(['check', 'app.tsx'], {}, dir);
+	expect(check.stdout).toContain('starts and draws');
+	expect(check.code).toBe(0);
+	const screen = await cli(['screen', 'app.tsx', '--cols', '200', '--rows', '6'], {}, dir);
+	expect(screen.code).toBe(0);
+	expect(screen.stdout).toContain(pinnedRuntime);
+	expect(screen.stdout).toContain(`data=${join(guiHome, 'data', 'entryfile')}`);
+
+	writeFileSync(join(dir, 'extra.tsx'), SHOW_ENV);
+	const extra = await cli(['screen', join(dir, 'extra.tsx'), '--cols', '200', '--rows', '6']);
+	expect(extra.code).toBe(0);
+	expect(extra.stdout).toContain(pinnedRuntime);
+	expect(extra.stdout).toContain('data=undefined');
+}, 60_000);
+
+test('an installed app started from its folder or its file needs the same approval as by name', async () => {
+	const dir = join(home, 'grower');
+	writeApp(dir, {name: 'grower', entry: 'app.tsx', kit: `^${version}`, permissions: {}}, SHOW_ENV);
+	expect((await cli(['install', dir])).code).toBe(0);
+	writeFileSync(join(dir, 'gui.json'), JSON.stringify({name: 'grower', entry: 'app.tsx', kit: `^${version}`, permissions: {run: ['*']}}));
+	for (const [args, cwd] of [[['screen', './grower', '--rows', '6'], home], [['screen', '.', '--rows', '6'], dir], [['screen', 'app.tsx', '--rows', '6'], dir], [['check', dir], home]] as const) {
+		const run = await cli([...args], {}, cwd);
+		expect(run.code).toBe(2);
+		expect(run.stderr).toContain('now asks for more');
+		expect(run.stderr).toContain('run    any command');
+	}
+}, 60_000);
+
+test('an installed app whose "kit" no longer matches its kit copy stops until it is installed again', async () => {
+	const dir = join(home, 'ranged');
+	writeApp(dir, {name: 'ranged', entry: 'app.tsx', kit: `^${version}`, permissions: {}}, SHOW_ENV);
+	expect((await cli(['install', dir])).code).toBe(0);
+	writeFileSync(join(dir, 'gui.json'), JSON.stringify({name: 'ranged', entry: 'app.tsx', kit: '^99.0.0', permissions: {}}));
+	for (const target of ['ranged', dir]) {
+		const run = await cli(['screen', target, '--rows', '6']);
+		expect(run.code).toBe(2);
+		expect(run.stderr).toContain(`installed on gui-kit ${version}, but gui.json asks for ^99.0.0: run gui install`);
+	}
+	expect((await cli(['check', 'ranged'])).code).toBe(2);
+}, 60_000);
+
+test('install and new --dir compare and store resolved paths', async () => {
+	// The test HOME is in /var/folders, a symlink to /private/var: every path below has two spellings.
+	const real = join(home, 'real-place');
+	mkdirSync(real, {recursive: true});
+	symlinkSync(real, join(home, 'linked-place'));
+	const viaLink = join(home, 'linked-place', 'vialink');
+	expect((await cli(['new', 'vialink', '--dir', viaLink])).code).toBe(0);
+	expect(registry()['vialink']!.path).toBe(realpathSync(viaLink));
+	for (const [folder, cwd] of [[viaLink, home], [join(real, 'vialink'), home], [realpathSync(viaLink), home], ['.', viaLink]] as const) {
+		const again = await cli(['install', folder], {}, cwd);
+		expect(again.stderr).not.toContain('already installed');
+		expect(again.code).toBe(0);
+	}
+	expect((await cli(['new', 'vialink', '--dir', join(real, 'vialink')])).stderr).toContain('never overwrites');
+	expect(registry()['vialink']!.path).toBe(realpathSync(viaLink));
+}, 60_000);
+
+test('$REPO is the git work tree that holds $CWD, or $CWD outside a repository', () => {
+	const repo = join(home, 'repo-var');
+	mkdirSync(join(repo, '.git'), {recursive: true});
+	mkdirSync(join(repo, 'src', 'deep'), {recursive: true});
+	const places = {app: join(home, 'app'), kit, data: join(guiHome, 'data', 'x'), gui: guiHome};
+	expect(expandPath('$REPO', {...places, cwd: join(repo, 'src', 'deep')})).toBe(realpathSync(repo));
+	expect(expandPath('$REPO/notes', {...places, cwd: repo})).toBe(join(realpathSync(repo), 'notes'));
+	const plain = join(home, 'plain-folder');
+	mkdirSync(plain, {recursive: true});
+	expect(expandPath('$REPO', {...places, cwd: plain})).toBe(realpathSync(plain));
+});
+
+test('screen --wait and the <Wait> key give the app time before the screen is taken', async () => {
+	const file = join(home, 'later.tsx');
+	writeFileSync(file, `import {Shell, Text, useEffect, useState} from 'gui-kit';
+export default function App() {
+	const [text, setText] = useState('soon');
+	useEffect(() => {
+		const timer = setTimeout(() => setText('later'), 600);
+		return () => clearTimeout(timer);
+	}, []);
+	return <Shell title="wait"><Text>{'text=' + text}</Text></Shell>;
+}
+`);
+	expect((await cli(['screen', file, '--rows', '6'])).stdout).toContain('text=soon');
+	expect((await cli(['screen', file, '--rows', '6', '--wait', '1000'])).stdout).toContain('text=later');
+	expect((await cli(['screen', file, '--rows', '6', '--keys', '<Wait><Wait><Wait><Wait>'])).stdout).toContain('text=later');
+	expect((await cli(['screen', file, '--wait', 'soon'])).code).toBe(2);
+	const help = (await cli(['help'])).stdout;
+	expect(help).toContain('--wait MS');
+	expect(help).toContain('<Wait>');
 }, 60_000);

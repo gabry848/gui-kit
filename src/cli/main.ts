@@ -3,10 +3,10 @@
 import {chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {homedir, tmpdir} from 'node:os';
-import {basename, join, relative, resolve} from 'node:path';
-import {KIT, KIT_VERSION, kitEnv, linkedKit, linkKit, pickKit, pinnedKit, saveKit, savedKits, type Kit} from './kits.js';
-import {covers, describe, ENFORCED, sandboxed, type Grant, type Places} from './permissions.js';
-import {GUI_HOME, loadRegistry, readManifest, resolveTarget, saveRegistry, type Target} from './registry.js';
+import {basename, dirname, join, relative, resolve} from 'node:path';
+import {KIT, KIT_VERSION, kitEnv, linkedKit, linkKit, nearestLinkedKit, pickKit, pinnedKit, saveKit, savedKits, type Kit} from './kits.js';
+import {covers, describe, ENFORCED, real, sandboxed, type Grant, type Places} from './permissions.js';
+import {GUI_HOME, loadRegistry, NAME, readManifest, resolveTarget, saveRegistry, type Target} from './registry.js';
 import {inScratch, listScratch, newScratch, SCRATCH, touchScratch} from './scratch.js';
 
 // Subcommands; an app named like one could not be started as `gui <name>`.
@@ -24,10 +24,11 @@ const HELP = `gui — terminal apps built with gui-kit ${KIT_VERSION}
   gui ask <app|folder|file>      start it and print the value passed to finish() as JSON;
                                  exit 1 if the user closes it without answering or it fails,
                                  3 if there is no terminal to draw on
-  gui screen <app|folder|file> [--keys K] [--cols N] [--rows N] [args] [-- args]
+  gui screen <app|folder|file> [--keys K] [--wait MS] [--cols N] [--rows N] [args] [-- args]
                                  draw it in a virtual terminal, press the keys K (Vim
-                                 notation: 5j/find<CR>) and print the screen, then
-                                 [finish] <json>, or [exit] if the app quit; exit 1 on an error
+                                 notation: 5j/find<CR>; <Wait> pauses 250 ms), wait MS ms
+                                 more if given, print the screen, then [finish] <json>,
+                                 or [exit] if the app quit; exit 1 on an error
   gui check <app|folder|file>    type check (tsc) and a first render without a terminal
 
   gui scratch [name]             new one-off app file in ${tildify(SCRATCH)}; prints its path
@@ -72,8 +73,16 @@ function prepare(target: Target, appArgs: string[]): Prepared {
 	const {installed, manifest} = target;
 	let kit: Kit;
 	if (installed && manifest) {
+		// Started by name or from its folder: either way it gets only what you approved.
+		const name = target.name!;
+		if (manifest.name !== name) {
+			fail(`${name} is installed from ${installed.path}, but its gui.json now calls it "${manifest.name}": put the name back, or run gui uninstall ${name} and then gui install ${installed.path}`);
+		}
 		if (!covers(installed.permissions, manifest.permissions)) {
-			fail(`${target.name} now asks for more than you allowed:\n${describe(manifest.permissions).map(line => `  ${line}`).join('\n')}\nReview and approve it with: gui install ${installed.path}`);
+			fail(`${name} now asks for more than you allowed:\n${describe(manifest.permissions).map(line => `  ${line}`).join('\n')}\nReview and approve it with: gui install ${installed.path}`);
+		}
+		if (installed.kit && manifest.kit && !Bun.semver.satisfies(installed.kit, manifest.kit)) {
+			fail(`${name} is installed on gui-kit ${installed.kit}, but gui.json asks for ${manifest.kit}: run gui install ${installed.path}`);
 		}
 		kit = installed.kit ? pinnedKit(installed.kit) : pickKit(manifest.kit);
 		linkKit(installed.path, kit);
@@ -85,15 +94,17 @@ function prepare(target: Target, appArgs: string[]): Prepared {
 		}
 		kit = linked ?? pickKit(manifest.kit);
 	} else {
-		kit = pickKit(undefined);
+		// A single file imports the kit its folder links, if any, so the child scripts must come from that kit too.
+		kit = nearestLinkedKit(target.dir) ?? pickKit(undefined);
 	}
 	touchScratch(target.file);
-	const data = manifest ? join(GUI_HOME, 'data', manifest.name) : undefined;
+	// An installed app keeps the data folder of the name you installed it under.
+	const data = manifest ? dataFolder(installed ? target.name! : manifest.name) : undefined;
 	if (data) mkdirSync(data, {recursive: true});
 	return {
 		kit,
 		grant: manifest?.permissions ?? 'full',
-		places: {app: target.dir, kit: kit.dir, data: data ?? join(GUI_HOME, 'data'), cwd: process.cwd()},
+		places: {app: target.dir, kit: kit.dir, data: data ?? join(GUI_HOME, 'data'), cwd: process.cwd(), gui: GUI_HOME},
 		env: {
 			...(process.env as Record<string, string>),
 			...kitEnv(kit),
@@ -103,6 +114,14 @@ function prepare(target: Target, appArgs: string[]): Prepared {
 			...terminalDevice(),
 		},
 	};
+}
+
+/** GUI_HOME/data/<name>; the sandbox lets the app read and write it, so it must stay inside GUI_HOME/data. */
+function dataFolder(name: string): string {
+	const root = resolve(GUI_HOME, 'data');
+	const dir = resolve(root, name);
+	if (!NAME.test(name) || dirname(dir) !== root) fail(`${name}: not a valid app name, so it gets no data folder`);
+	return dir;
 }
 
 /**
@@ -119,7 +138,9 @@ type Stdio = 'inherit' | 'ignore';
 
 /** Runs one of the kit's child scripts for an app, inside its sandbox. */
 async function child(prepared: Prepared, script: string, args: string[], stdio: [Stdio, Stdio, Stdio] = ['inherit', 'inherit', 'inherit']): Promise<number> {
-	const argv = sandboxed([process.execPath, join(prepared.kit.dir, 'src', 'cli', script), ...args], prepared.grant, prepared.places);
+	// An app with permissions never gets the .env of the folder it starts in: Bun would load it before the app runs.
+	const bunOptions = prepared.grant === 'full' ? [] : ['--no-env-file'];
+	const argv = sandboxed([process.execPath, ...bunOptions, join(prepared.kit.dir, 'src', 'cli', script), ...args], prepared.grant, prepared.places);
 	return Bun.spawn(argv, {env: prepared.env, stdio}).exited;
 }
 
@@ -135,14 +156,14 @@ function isOurLauncher(file: string): boolean {
 }
 
 function checkName(name: string) {
-	if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) fail(`${name}: a name uses only lowercase letters, digits and dashes`);
+	if (!NAME.test(name)) fail(`${name}: a name uses only lowercase letters, digits and dashes`);
 	if (COMMANDS.includes(name)) fail(`${name}: that is a gui command, pick another name`);
 }
 
-/** A name already installed from another folder is not silently moved. */
+/** A name already installed from another folder is not silently moved; symlinked paths to the same folder are the same folder. */
 function checkFree(apps: Record<string, {path: string}>, name: string, dir: string) {
 	const other = apps[name];
-	if (other && resolve(other.path) !== resolve(dir)) fail(`${name} is already installed from ${other.path}: run \`gui uninstall ${name}\` first`);
+	if (other && real(other.path) !== real(dir)) fail(`${name} is already installed from ${other.path}: run \`gui uninstall ${name}\` first`);
 }
 
 /** Shows what an app asks for and gets the user's yes, or --yes when they already agreed. */
@@ -158,7 +179,9 @@ function approve(name: string, grant: Grant, yes: boolean) {
 	if (!/^y(es)?$/i.test(answer?.trim() ?? '')) fail(`${name}: not installed`);
 }
 
-function install(dir: string, {bin: withBin = false, yes = false} = {}): string {
+function install(folder: string, {bin: withBin = false, yes = false} = {}): string {
+	// The registry keeps resolved paths, so the same folder reached through a symlink matches.
+	const dir = real(resolve(folder));
 	const manifest = readManifest(dir);
 	if (!manifest) fail(`${dir}: no gui.json`);
 	checkName(manifest.name);
@@ -258,7 +281,8 @@ type ProjectOptions = {name: string; dir?: string | undefined; from?: string | u
 /** Writes gui.json, app.tsx and tsconfig.json; checks everything first, so a refusal leaves nothing behind. */
 function createProject({name, dir: dirOption, from, description}: ProjectOptions): string {
 	checkName(name);
-	const dir = resolve(dirOption ?? name);
+	// Resolved (symlinks followed) even before the folder exists, as the registry stores it.
+	const dir = real(resolve(dirOption ?? name));
 	for (const file of ['gui.json', 'app.tsx', 'tsconfig.json']) {
 		if (existsSync(join(dir, file))) fail(`${join(dir, file)} already exists: gui never overwrites files`);
 	}
@@ -395,10 +419,13 @@ try {
 			const keys = option(own, '--keys') ?? '';
 			const cols = option(own, '--cols') ?? '100';
 			const rows = option(own, '--rows') ?? '30';
+			const wait = option(own, '--wait') ?? '0';
+			if (!/^\d+$/.test(wait)) fail('gui screen --wait <milliseconds>');
 			const [target, ...before] = own;
-			if (!target) fail('gui screen <app|file> [--keys K] [args]');
+			if (!target) fail('gui screen <app|file> [--keys K] [--wait MS] [args]');
 			const resolved = resolveTarget(target);
-			process.exit(await child(prepare(resolved, [...before, ...passed]), 'screen.tsx', [resolved.file, keys, cols, rows]));
+			// A kit older than --wait ignores the fifth argument.
+			process.exit(await child(prepare(resolved, [...before, ...passed]), 'screen.tsx', [resolved.file, keys, cols, rows, wait]));
 			break;
 		}
 		case 'check':

@@ -5,4 +5,5 @@ while [ -L "$self" ]; do
 	target=$(readlink "$self")
 	case $target in /*) self=$target ;; *) self=$(dirname "$self")/$target ;; esac
 done
-exec bun "$(cd "$(dirname "$self")/.." && pwd)/src/cli/main.ts" "$@"
+# --no-env-file: a .env in the current folder must not reach the CLI, which hands its environment to apps.
+exec bun --no-env-file "$(cd "$(dirname "$self")/.." && pwd)/src/cli/main.ts" "$@"

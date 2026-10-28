@@ -58,6 +58,10 @@ function bytesFor(token: string): string {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/** A pseudo-key for `press`: no bytes, just time for timers, processes and files to catch up. */
+const WAIT = '<Wait>';
+const WAIT_MS = 250;
+
 export const TEST_CAPS: Caps = {graphics: 'none', kittyGraphicsDetected: false, sixelDetected: false, terminal: undefined, truecolor: true, sgrPixels: false, syncOutput: true, kittyKeyboard: false, cell: undefined, inTmux: false};
 
 export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = TEST_CAPS} = {}) {
@@ -127,9 +131,13 @@ export async function headless(node: ReactNode, {cols = 100, rows = 30, caps = T
 	await settle();
 
 	return {
-		/** Types keys in Vim notation, e.g. `5j`, `gg`, `:q<CR>`. */
+		/** Types keys in Vim notation, e.g. `5j`, `gg`, `:q<CR>`; `<Wait>` sends nothing and pauses 250 ms. */
 		async press(keys: string) {
 			for (const token of tokenize(keys)) {
+				if (token === WAIT) {
+					await settle(WAIT_MS);
+					continue;
+				}
 				stdin.push(bytesFor(token));
 				// A lone Esc is only flushed after Ink's escape timeout.
 				await sleep(token === '<Esc>' ? 80 : 5);

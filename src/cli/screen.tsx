@@ -2,7 +2,7 @@
 // types the keys and prints what the screen shows, without a real terminal.
 // After the screen it prints `[finish] <json>`, or `[exit]` when the app
 // ended; an app that crashed exits 1 with the error on stderr.
-// usage: screen.tsx <file> <keys> <cols> <rows>
+// usage: screen.tsx <file> <keys> <cols> <rows> [wait ms before the screen is taken]
 
 import {pathToFileURL} from 'node:url';
 
@@ -14,7 +14,7 @@ process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) =>
 import type {ComponentType} from 'react';
 import {headless} from 'gui-kit/testing';
 
-const [file, keys = '', cols = '100', rows = '30'] = process.argv.slice(2);
+const [file, keys = '', cols = '100', rows = '30', wait = '0'] = process.argv.slice(2);
 const {default: App} = (await import(pathToFileURL(file!).href)) as {default?: ComponentType};
 if (typeof App !== 'function') {
 	console.error(`${file}: the app must default-export its component`);
@@ -31,7 +31,7 @@ if (keys) {
 		process.exit(2);
 	}
 }
-await app.settle(80);
+await app.settle(80 + (Number(wait) || 0));
 const lines = app.lines();
 while (lines.length > 0 && lines.at(-1)!.trim() === '') lines.pop();
 process.stdout.write(lines.join('\n') + '\n');
