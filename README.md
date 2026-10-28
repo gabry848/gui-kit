@@ -68,7 +68,7 @@ Everything lives in `${XDG_DATA_HOME:-~/.local/share}/gui` (`GUI_HOME` moves it)
 	"description": "Notes for the current project",
 	"entry": "app.tsx",
 	"kit": "^0.1.0",
-	"permissions": {"read": ["$CWD"], "write": ["$CWD/notes"], "run": ["git"], "net": false}
+	"permissions": {"read": ["$REPO"], "write": ["$CWD/notes"], "run": ["git"], "net": false}
 }
 ```
 
@@ -80,14 +80,14 @@ Everything lives in `${XDG_DATA_HOME:-~/.local/share}/gui` (`GUI_HOME` moves it)
 |---|---|
 | `read` | Paths it may also read inside your home. |
 | `write` | Paths it may also write (and read). |
-| `net` | `false` (no sockets, no DNS), `"local"` (localhost by IP) or `true`. |
+| `net` | `false` (no sockets at all, no DNS), `"local"` (connections out to localhost only, no listening) or `true`. |
 | `run` | Command names it may run, such as `git`, or `"*"` for any. Programs it starts stay in the sandbox. With `git` or `"*"` it may also read `~/.gitconfig` and `~/.config/git`. |
 
-Paths may start with `$CWD` (the folder `gui` was started in), `$REPO` (the git work tree containing `$CWD`), `$APP`, `$DATA`, `$HOME`, `$TMP` or `~`. An app without a `"permissions"` field has full access. Sandboxed apps never see the variables of a `.env` file.
+Paths may start with `$CWD` (the folder `gui` was started in), `$REPO` (the git work tree containing `$CWD`), `$APP`, `$DATA`, `$HOME`, `$TMP` or `~`. An app without a `"permissions"` field has full access. Sandboxed apps never see the variables of a `.env` file, never read the registry or other apps' data, and may not create or change `tsconfig.json`, `jsconfig.json`, `bunfig.toml` or `.env` files anywhere, because Bun would run code from them in the next program started in that folder; `gui` itself never loads a start folder's `bunfig.toml`.
 
 `gui install` lists what an app asks for and needs your yes; without a terminal it needs `--yes`, which an agent should pass only after you agreed. Reinstalling with the same permissions asks nothing; an installed app whose `gui.json` later asks for more, changes its name or leaves its `"kit"` range stops until you install it again, whether you start it by name, by folder or by its entry file.
 
-On macOS the app runs inside `sandbox-exec` with a profile built from these permissions, and `gui screen` and `gui check` use the same sandbox. On other systems the permissions are shown and approved but not enforced. The app's data folder is in `GUI_DATA_DIR`.
+On macOS the app runs inside `sandbox-exec` with a profile built from these permissions, and `gui screen` and `gui check` use the same sandbox. On other systems the permissions are shown and approved but not enforced. The app's data folder is in `GUI_DATA_DIR`: `data/<name>` for an installed app, a folder of its own under `data/.dev` for one that was never installed.
 
 ## Writing an app
 
@@ -124,4 +124,4 @@ bun run demo                  # demo app: a list and a canvas
 bun bench/canvas.ts 200 50    # frame cost per canvas backend
 ```
 
-The CLI of one kit version starts apps through `src/cli/launch.tsx` and `src/cli/screen.tsx` of another, so their arguments (screen.tsx takes an optional fifth one, the extra wait in ms) and the `GUI_ARGS`, `GUI_APP_DIR`, `GUI_DATA_DIR` and `GUI_TTY` variables must stay compatible. Bump the version in `package.json` for every change apps can notice; in 0.x a minor bump is a breaking change.
+The CLI of one kit version starts apps through `src/cli/launch.tsx` and `src/cli/screen.tsx` of another, so their arguments (screen.tsx takes an optional fifth one, the extra wait in ms) and the `GUI_ARGS`, `GUI_APP_DIR`, `GUI_DATA_DIR` and `GUI_TTY` variables must stay compatible. Bump the version in `package.json` for every change apps can notice; in 0.x a minor bump is a breaking change. `bin/gui` starts Bun in the kit folder (`--cwd`, `--config=/dev/null`, `--no-env-file`) and passes your folder in `GUI_CWD`, so a planted `bunfig.toml` or `tsconfig.json` in the folder you run `gui` from can't take over the CLI.
