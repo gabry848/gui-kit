@@ -2,12 +2,22 @@
 // stdin first: it takes the SGR mouse reports out and hands Ink the rest
 // through a stream that looks like a tty. It reads with 'data' events:
 // under Bun, 'readable' stops firing once the probe has paused stdin.
+//
+// It also drops the terminal's replies to the probe's queries (probe.ts).
+// They reach stdin when the terminal answers after the probe gave up, e.g.
+// over a slow ssh link, and Ink would read them as keys ("Gi=31;OK" types
+// G, i...). Only complete replies are dropped, and no key sends one: a lone
+// ESC P or ESC _ is Alt+P or Alt+_.
 
 import {EventEmitter} from 'node:events';
 
 const REPORT = /\u001B\[<\d+;\d+;\d+[Mm]/g;
-// The tail of a chunk that may be the start of a report split across chunks.
-const PARTIAL = /\u001B(?:\[(?:<[\d;]*)?)?$/;
+// Kitty graphics (APC G ... ST), XTVERSION (DCS >| ... ST or BEL), DA1
+// (CSI ? ... c), DECRPM (CSI ? ... $ y), kitty keyboard flags (CSI ? n u)
+// and cell size (CSI 6 ; h ; w t).
+const REPLY = /\u001B_G[^\u001B]*\u001B\\|\u001BP>\|[^\u001B\u0007]*(?:\u001B\\|\u0007)|\u001B\[\?[\d;]*(?:c|\$y|u)|\u001B\[6;\d+;\d+t/g;
+// The tail of a chunk that may be the start of a report or a reply split across chunks.
+const PARTIAL = /\u001B(?:\[(?:<[\d;]*|\?[\d;]*\$?|6(?:;\d*){0,2})?|_(?:G[^\u001B]*\u001B?)?|P(?:>(?:\|[^\u001B\u0007]*\u001B?)?)?)?$/;
 
 type Source = NodeJS.ReadableStream & {
 	isTTY?: boolean;
@@ -31,16 +41,24 @@ export class InputSplitter extends EventEmitter {
 
 	private accept(chunk: string) {
 		clearTimeout(this.flushTimer);
-		let data = (this.carry + chunk).replace(REPORT, report => {
-			this.emit('mouse', report);
-			return '';
-		});
+		const raw = this.carry + chunk;
+		let data = raw
+			.replace(REPORT, report => {
+				this.emit('mouse', report);
+				return '';
+			})
+			.replace(REPLY, reply => {
+				this.emit('reply', reply);
+				return '';
+			});
 		this.carry = '';
 		const partial = PARTIAL.exec(data);
-		if (partial && partial[0].length > 1) {
+		// A chunk that is only ESC is the Esc key, so it goes on at once; an
+		// ESC that ends a longer chunk may start a sequence cut in two.
+		if (partial && (partial[0].length > 1 || raw.length > 1)) {
 			this.carry = partial[0];
 			data = data.slice(0, partial.index);
-			// Not a report after all: give it to Ink shortly.
+			// Not a report or a reply after all: give it to Ink shortly.
 			this.flushTimer = setTimeout(() => {
 				const rest = this.carry;
 				this.carry = '';

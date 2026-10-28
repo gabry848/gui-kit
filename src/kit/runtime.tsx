@@ -1,14 +1,13 @@
 import {openSync} from 'node:fs';
 import {ReadStream, WriteStream} from 'node:tty';
-import type {ReactNode} from 'react';
+import {useLayoutEffect, type ReactNode} from 'react';
 import {render} from 'ink';
+import {kittyDelete, kittyIds} from './canvas/encode.js';
 import {KitProvider} from './context.js';
 import {GraphicsContext, GraphicsLayer} from './graphics.js';
 import {InputSplitter} from './input.js';
 import {MOUSE_OFF, mouseOn} from './mouse.js';
 import {probe, type Caps} from './probe.js';
-
-const KITTY_FREE_ALL = '\u001B_Ga=d,d=A,q=2\u001B\\';
 
 export const RENDER_OPTIONS = {
 	alternateScreen: true,
@@ -51,13 +50,35 @@ function terminal(): {stdin: NodeJS.ReadStream; stdout: NodeJS.WriteStream} {
 	};
 }
 
+/**
+ * Deletes the kitty images still alive when Ink unmounts the app. Ink drops
+ * the components' own deletes once it is unmounting, and leaves the
+ * alternate screen right after React's cleanup, where these images live. A
+ * layout cleanup here runs inside that cleanup, before the components'
+ * effects give their ids back, so it writes to the terminal directly while
+ * the app's screen is still up.
+ */
+function FreeKittyImages({stdout, children}: {stdout: NodeJS.WriteStream; children: ReactNode}) {
+	useLayoutEffect(() => () => {
+		const ids = kittyIds.live();
+		if (ids.length > 0) stdout.write(ids.map(kittyDelete).join(''));
+	}, [stdout]);
+	return children;
+}
+
 /** Starts a kit app full screen and resolves on exit, with its result if it called finish(). */
 export async function run(app: (caps: Caps) => ReactNode): Promise<RunResult> {
-	const {stdin, stdout} = terminal();
+	return runOn(terminal(), app);
+}
+
+/** run() on the given terminal streams. */
+export async function runOn({stdin, stdout}: {stdin: NodeJS.ReadStream; stdout: NodeJS.WriteStream}, app: (caps: Caps) => ReactNode): Promise<RunResult> {
 	const caps = await probe(stdin, stdout);
 	let result: RunResult = {finished: false};
+	// Kitty images are freed by FreeKittyImages: on the shell's screen a
+	// delete would hit the user's own pictures, not the app's.
 	const restore = () => {
-		stdout.write(MOUSE_OFF + (caps.graphics === 'kitty' ? KITTY_FREE_ALL : ''));
+		stdout.write(MOUSE_OFF);
 		if (stdin.isTTY) stdin.setRawMode(false);
 	};
 	stdout.write(mouseOn(caps.sgrPixels));
@@ -69,7 +90,8 @@ export async function run(app: (caps: Caps) => ReactNode): Promise<RunResult> {
 	};
 	// Sixel images are drawn after Ink's frames, so Ink writes through the layer.
 	const layer = caps.graphics === 'sixel' ? new GraphicsLayer(stdout, caps.syncOutput) : undefined;
-	const tree = <KitProvider caps={caps} input={input} onFinish={onFinish}>{app(caps)}</KitProvider>;
+	let tree = <KitProvider caps={caps} input={input} onFinish={onFinish}>{app(caps)}</KitProvider>;
+	if (caps.graphics === 'kitty') tree = <FreeKittyImages stdout={stdout}>{tree}</FreeKittyImages>;
 	const instance = render(<GraphicsContext.Provider value={layer}>{tree}</GraphicsContext.Provider>, {
 		...RENDER_OPTIONS,
 		stdout: layer?.stream ?? stdout,
@@ -82,6 +104,7 @@ export async function run(app: (caps: Caps) => ReactNode): Promise<RunResult> {
 	} finally {
 		layer?.dispose();
 		restore();
+		process.off('exit', restore);
 		stdin.pause();
 	}
 	return result;

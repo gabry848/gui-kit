@@ -154,13 +154,21 @@ export function kittyTransmit(raster: Bitmap, cols: number, rows: number, id: nu
 	return out;
 }
 
-/** Placeholder text for image `id` (1..255): every cell names its row and column. */
+/**
+ * Placeholder text for image `id` (1..2^32-1): every cell names its row and
+ * column. The id rides in the foreground color, a 256-color index up to 255
+ * and 24-bit color above; a third diacritic on every cell carries its top
+ * byte from 2^24 on.
+ */
 export function kittyPlaceholders(cols: number, rows: number, id: number): string[] {
+	const color = id <= 255 ? `5;${id}` : `2;${(id >>> 16) & 0xFF};${(id >>> 8) & 0xFF};${id & 0xFF}`;
+	const high = id >>> 24;
+	const top = high > 0 ? String.fromCodePoint(DIACRITICS[high]!) : '';
 	const lines: string[] = [];
 	for (let row = 0; row < rows; row++) {
-		let line = `\u001B[38;5;${id}m`;
+		let line = `\u001B[38;${color}m`;
 		for (let col = 0; col < cols; col++) {
-			line += PLACEHOLDER + String.fromCodePoint(DIACRITICS[row]!, DIACRITICS[col]!);
+			line += PLACEHOLDER + String.fromCodePoint(DIACRITICS[row]!, DIACRITICS[col]!) + top;
 		}
 		lines.push(line + '\u001B[39m');
 	}
@@ -169,10 +177,42 @@ export function kittyPlaceholders(cols: number, rows: number, id: number): strin
 
 export const KITTY_MAX_CELLS = DIACRITICS.length;
 
-let lastKittyId = 0;
+/** Every id the placeholders can name. */
+export const KITTY_MAX_ID = 0xFF_FF_FF_FF;
 
-/** A kitty image id for placeholders, 1..255 (the id rides in a 256-color foreground). */
-export function nextKittyId(): number {
-	lastKittyId = (lastKittyId % 255) + 1;
-	return lastKittyId;
+/**
+ * Kitty image ids, handed out in turn and never one still in use, so a new
+ * image cannot replace or free one that is still on screen.
+ */
+export class KittyIds {
+	private last = 0;
+	private readonly used = new Set<number>();
+
+	constructor(private readonly max = KITTY_MAX_ID) {}
+
+	take(): number {
+		if (this.used.size >= this.max) throw new Error('no free kitty image id');
+		do this.last = this.last >= this.max ? 1 : this.last + 1;
+		while (this.used.has(this.last));
+		this.used.add(this.last);
+		return this.last;
+	}
+
+	/** Gives an id back once its image has been deleted. */
+	release(id: number) {
+		this.used.delete(id);
+	}
+
+	/** The ids in use, e.g. to free their images before the app's screen goes away. */
+	live(): number[] {
+		return [...this.used];
+	}
+}
+
+/** The ids of this process's images; Image and Canvas take one only for the kitty backend. */
+export const kittyIds = new KittyIds();
+
+/** The command that deletes image `id` and frees its data. */
+export function kittyDelete(id: number): string {
+	return `\u001B_Ga=d,d=I,i=${id},q=2\u001B\\`;
 }

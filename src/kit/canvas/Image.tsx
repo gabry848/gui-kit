@@ -6,7 +6,7 @@ import {sixelFor, useGraphics} from '../graphics.js';
 import type {Caps} from '../probe.js';
 import {theme} from '../theme.js';
 import {blankBitmap, drawBitmap, encodeHalfBitmap, isBitmap, loadImage, type Bitmap, type Fit} from './bitmap.js';
-import {KITTY_MAX_CELLS, kittyPlaceholders, kittyTransmit, nextKittyId, pixelsPerCell} from './encode.js';
+import {KITTY_MAX_CELLS, kittyDelete, kittyIds, kittyPlaceholders, kittyTransmit, pixelsPerCell} from './encode.js';
 
 export type ImageProps = {
 	/** A PNG or JPEG file, or decoded pixels. */
@@ -72,7 +72,8 @@ export function Image({src, fit = 'contain', width, height, smooth = true}: Imag
 	const box = useBoxMetrics(ref);
 	const {caps, write} = useKit();
 	const layer = useGraphics();
-	const [imageId] = useState(nextKittyId);
+	// An id only for kitty, held until the image is deleted.
+	const [imageId] = useState(() => (caps.graphics === 'kitty' ? kittyIds.take() : 0));
 	const [key] = useState(() => ({}));
 	const {bitmap, error} = useBitmap(src);
 	const backend: Backend = caps.graphics === 'kitty' ? 'kitty' : caps.graphics === 'sixel' && caps.cell && layer ? 'sixel' : 'half';
@@ -99,7 +100,10 @@ export function Image({src, fit = 'contain', width, height, smooth = true}: Imag
 
 	useEffect(() => () => {
 		layer?.show(key, undefined);
-		if (caps.graphics === 'kitty') write(`\u001B_Ga=d,d=I,i=${imageId},q=2\u001B\\`);
+		if (imageId) {
+			write(kittyDelete(imageId));
+			kittyIds.release(imageId);
+		}
 	}, []);
 
 	// One side given: the other follows the image, in cells of cell.w by cell.h.

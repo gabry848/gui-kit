@@ -1,7 +1,8 @@
 // Asks the terminal what it supports before Ink takes over stdin.
 // Every terminal answers DA1, so its reply ends the probe; anything that
 // did not answer before it is treated as unsupported. Raw mode stays on
-// afterwards, so a late reply is never echoed onto the screen.
+// afterwards, so a late reply is never echoed onto the screen, and
+// InputSplitter (input.ts) drops it, so it never reaches the app as keys.
 
 export type Caps = {
 	/**
@@ -62,9 +63,10 @@ function kittyByDefault(terminal: Caps['terminal']): boolean {
 
 export function capsFromReplies(replies: string, env: NodeJS.ProcessEnv): Caps {
 	const inTmux = Boolean(env['TMUX']);
+	// DECRPM: 1 set, 2 reset, 3 permanently set; 0 unknown and 4 permanently reset cannot be used.
 	const mode = (n: number) => {
 		const match = new RegExp(`\\u001B\\[\\?${n};(\\d)\\$y`).exec(replies);
-		return match ? ['1', '2', '3', '4'].includes(match[1]!) : false;
+		return match ? ['1', '2', '3'].includes(match[1]!) : false;
 	};
 	const cellMatch = /\u001B\[6;(\d+);(\d+)t/.exec(replies);
 	const cell = cellMatch ? {h: Number(cellMatch[1]), w: Number(cellMatch[2])} : undefined;

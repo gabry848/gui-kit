@@ -166,3 +166,84 @@ test('Image with kitty graphics sends the scaled picture as PNG and leaves place
 	expect(app.output()).toContain(`${ESC}_Ga=d,d=I,i=`);
 	await app.exit();
 });
+
+/** The JPEG with an APP1 Exif segment whose IFD0 holds only Orientation; after SOI or after the APP0 that follows it. */
+function withOrientation(jpeg: Uint8Array, orientation: number, little: boolean, afterApp0: boolean): Uint8Array {
+	const tiff = Buffer.alloc(26);
+	const u16 = (value: number, offset: number) => (little ? tiff.writeUInt16LE(value, offset) : tiff.writeUInt16BE(value, offset));
+	const u32 = (value: number, offset: number) => (little ? tiff.writeUInt32LE(value, offset) : tiff.writeUInt32BE(value, offset));
+	tiff.write(little ? 'II' : 'MM', 0, 'ascii');
+	u16(42, 2);
+	u32(8, 4);
+	u16(1, 8);
+	// Tag 0x0112, SHORT, count 1, the value left-aligned in its 4 bytes; then no next IFD.
+	u16(0x01_12, 10);
+	u16(3, 12);
+	u32(1, 14);
+	u16(orientation, 18);
+	u32(0, 22);
+	const body = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
+	const head = Buffer.from([0xFF, 0xE1, 0, 0]);
+	head.writeUInt16BE(body.length + 2, 2);
+	const bytes = Buffer.from(jpeg);
+	expect([bytes[2], bytes[3]]).toEqual([0xFF, 0xE0]);
+	const at = afterApp0 ? 4 + bytes.readUInt16BE(4) : 2;
+	return Buffer.concat([bytes.subarray(0, at), head, body, bytes.subarray(at)]);
+}
+
+test('JPEG EXIF orientation: all eight are turned upright, 5 to 8 swap width and height', () => {
+	const colors = {TL: [230, 30, 30], TR: [30, 200, 30], BL: [30, 30, 230], BR: [240, 240, 240]} as const;
+	type Corner = keyof typeof colors;
+	// A 32x16 photo in four flat quadrants, as stored.
+	const stored = bitmap(32, 16, (x, y) => [...colors[`${y < 8 ? 'T' : 'B'}${x < 16 ? 'L' : 'R'}` as Corner], 255] as [number, number, number, number]);
+	const jpeg = encodeJpeg({width: 32, height: 16, data: Buffer.from(stored.data)}, 95).data;
+	// What shows at the upright picture's top left, top right, bottom left and bottom right, per the EXIF meaning of each value.
+	const upright: Record<number, [Corner, Corner, Corner, Corner]> = {
+		1: ['TL', 'TR', 'BL', 'BR'],
+		2: ['TR', 'TL', 'BR', 'BL'],
+		3: ['BR', 'BL', 'TR', 'TL'],
+		4: ['BL', 'BR', 'TL', 'TR'],
+		5: ['TL', 'BL', 'TR', 'BR'],
+		6: ['BL', 'TL', 'BR', 'TR'],
+		7: ['BR', 'TR', 'BL', 'TL'],
+		8: ['TR', 'BR', 'TL', 'BL'],
+	};
+	for (const [value, corners] of Object.entries(upright)) {
+		const orientation = Number(value);
+		for (const [little, afterApp0] of [[true, false], [false, true]] as const) {
+			const image = decodeImage(withOrientation(jpeg, orientation, little, afterApp0));
+			expect([image.width, image.height]).toEqual(orientation >= 5 ? [16, 32] : [32, 16]);
+			const [w, h] = [image.width, image.height];
+			const samples = [[w / 4, h / 4], [(3 * w) / 4, h / 4], [w / 4, (3 * h) / 4], [(3 * w) / 4, (3 * h) / 4]] as const;
+			samples.forEach(([x, y], index) => {
+				const pixel = at(image, x, y);
+				colors[corners[index]!].forEach((value, c) => expect(Math.abs(pixel[c]! - value)).toBeLessThan(40));
+			});
+		}
+	}
+});
+
+test('JPEG EXIF orientation: a broken or missing Exif segment leaves the picture as stored', () => {
+	const jpeg = Buffer.from(encodeJpeg({width: 16, height: 8, data: Buffer.alloc(16 * 8 * 4, 128)}, 90).data);
+	expect([decodeImage(jpeg).width, decodeImage(jpeg).height]).toEqual([16, 8]);
+	const exif = withOrientation(jpeg, 6, true, false);
+	expect(decodeImage(exif).width).toBe(8);
+	// IFD0 offset pointing past the segment, an unknown byte order, a value out of range.
+	const far = Buffer.from(exif);
+	far.writeUInt32LE(9999, 2 + 4 + 6 + 4);
+	const order = Buffer.from(exif);
+	order.write('XX', 2 + 4 + 6, 'latin1');
+	for (const bytes of [far, order, withOrientation(jpeg, 9, true, false), withOrientation(jpeg, 0, false, true)]) {
+		expect([decodeImage(bytes).width, decodeImage(bytes).height]).toEqual([16, 8]);
+	}
+});
+
+test('Image of a portrait photo stored sideways takes a portrait box', async () => {
+	const path = join(dir, 'portrait.jpg');
+	writeFileSync(path, withOrientation(encodeJpeg({width: 40, height: 20, data: Buffer.alloc(40 * 20 * 4, 200)}, 90).data, 6, false, true));
+	const app = await headless(<Box flexDirection="column"><Image src={path} width={10} /><Text>below</Text></Box>, {cols: 30, rows: 30});
+	await app.settle(80);
+	// Upright it is 20x40, i.e. 1:2: 10 columns of 1:2 cells make 10 rows.
+	expect(app.lines().findIndex(line => line.includes('below'))).toBe(10);
+	await app.exit();
+});

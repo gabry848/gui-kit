@@ -7,9 +7,10 @@ import {
 	encodeBraille,
 	encodeHalf,
 	KITTY_MAX_CELLS,
+	kittyDelete,
+	kittyIds,
 	kittyPlaceholders,
 	kittyTransmit,
-	nextKittyId,
 	pixelsPerCell,
 	type Backend,
 } from './encode.js';
@@ -41,7 +42,8 @@ export function Canvas({backend, version, draw, background = [250, 250, 245], on
 	const {width, height} = useBoxMetrics(ref);
 	const {caps, write} = useKit();
 	const layer = useGraphics();
-	const [imageId] = useState(nextKittyId);
+	// An id only where kitty graphics are on, held until the image is deleted.
+	const [imageId] = useState(() => (caps.graphics === 'kitty' ? kittyIds.take() : 0));
 	const [key] = useState(() => ({}));
 	// Pixels only where the probe allowed them (see Caps.graphics); otherwise
 	// draw braille, which works anywhere.
@@ -87,7 +89,10 @@ export function Canvas({backend, version, draw, background = [250, 250, 245], on
 
 	useEffect(() => () => {
 		layer?.show(key, undefined);
-		write(`\u001B_Ga=d,d=I,i=${imageId},q=2\u001B\\`);
+		if (imageId) {
+			write(kittyDelete(imageId));
+			kittyIds.release(imageId);
+		}
 	}, [imageId]);
 
 	useMouse(event => {

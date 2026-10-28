@@ -107,3 +107,15 @@ test('probe asks XTVERSION before DA1 and reads a split reply', async () => {
 	expect(caps.terminal).toEqual({name: 'ghostty', version: '1.4.0-dev+abc'});
 	expect(caps.kittyGraphicsDetected).toBe(true);
 });
+
+test('DECRPM: only set, reset and permanently set count; permanently reset (4) and unknown (0) do not', () => {
+	const cell = `${ESC}[6;34;16t`;
+	for (const value of ['1', '2', '3']) {
+		const caps = capsFromReplies(`${ESC}[?1016;${value}$y${ESC}[?2026;${value}$y${cell}`, {});
+		expect([caps.sgrPixels, caps.syncOutput]).toEqual([true, true]);
+	}
+	for (const value of ['0', '4']) {
+		const caps = capsFromReplies(`${ESC}[?1016;${value}$y${ESC}[?2026;${value}$y${cell}`, {});
+		expect([caps.sgrPixels, caps.syncOutput]).toEqual([false, false]);
+	}
+});

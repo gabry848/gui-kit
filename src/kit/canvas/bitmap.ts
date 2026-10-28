@@ -30,7 +30,7 @@ export function isBitmap(value: unknown): value is Bitmap {
 		&& bitmap.data?.length === bitmap.width * bitmap.height * 4;
 }
 
-/** Decodes a PNG or JPEG file's bytes. */
+/** Decodes a PNG or JPEG file's bytes; a JPEG is turned upright as its EXIF orientation says. */
 export function decodeImage(bytes: Uint8Array): Bitmap {
 	if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
 		const png = PNG.sync.read(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
@@ -38,9 +38,87 @@ export function decodeImage(bytes: Uint8Array): Bitmap {
 	}
 	if (bytes[0] === 0xFF && bytes[1] === 0xD8) {
 		const jpeg = decodeJpeg(bytes, {useTArray: true, formatAsRGBA: true});
-		return {width: jpeg.width, height: jpeg.height, data: jpeg.data};
+		return orient({width: jpeg.width, height: jpeg.height, data: jpeg.data}, jpegOrientation(bytes));
 	}
 	throw new Error('not a PNG or JPEG file');
+}
+
+/**
+ * The EXIF Orientation tag (0x0112) of a JPEG, 1 to 8, or 1 when there is
+ * none or it cannot be read. Cameras and phones store a portrait photo as
+ * landscape pixels and set this instead; jpeg-js ignores it.
+ */
+export function jpegOrientation(bytes: Uint8Array): number {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	let offset = 2;
+	// Marker segments up to the image data (SOS).
+	while (offset + 4 <= bytes.length && bytes[offset] === 0xFF) {
+		const marker = bytes[offset + 1]!;
+		if (marker === 0xFF) {
+			// Fill byte before a marker.
+			offset++;
+			continue;
+		}
+		if (marker === 0xDA || marker === 0xD9) break;
+		const length = view.getUint16(offset + 2);
+		const start = offset + 4;
+		const end = offset + 2 + length;
+		if (length < 2 || end > bytes.length) break;
+		// APP1 with "Exif\0\0", then a TIFF header and IFD0.
+		if (marker === 0xE1 && end - start >= 14 && view.getUint32(start) === 0x45_78_69_66 && view.getUint16(start + 4) === 0) {
+			const tiff = start + 6;
+			const order = view.getUint16(tiff);
+			if (order !== 0x49_49 && order !== 0x4D_4D) return 1;
+			const little = order === 0x49_49;
+			const ifd = tiff + view.getUint32(tiff + 4, little);
+			if (ifd + 2 > end) return 1;
+			const count = view.getUint16(ifd, little);
+			for (let entry = ifd + 2, n = 0; n < count && entry + 12 <= end; n++, entry += 12) {
+				if (view.getUint16(entry, little) !== 0x01_12) continue;
+				// Type SHORT: the value is in the first two bytes of the value field.
+				const value = view.getUint16(entry + 2, little) === 3 ? view.getUint16(entry + 8, little) : 1;
+				return value >= 1 && value <= 8 ? value : 1;
+			}
+			return 1;
+		}
+		offset = end;
+	}
+	return 1;
+}
+
+/**
+ * The bitmap turned as EXIF orientation `orientation` says: 2 mirrored,
+ * 3 rotated 180°, 4 flipped, 5 transposed, 6 rotated 90° clockwise,
+ * 7 transversed, 8 rotated 90° counterclockwise. 5 to 8 swap width and height.
+ */
+export function orient(bitmap: Bitmap, orientation: number): Bitmap {
+	if (orientation < 2 || orientation > 8) return bitmap;
+	const {width: w, height: h, data} = bitmap;
+	const swap = orientation >= 5;
+	const width = swap ? h : w;
+	const height = swap ? w : h;
+	// The source pixel for each upright pixel (x, y).
+	const source: (x: number, y: number) => number = [
+		(x: number, y: number) => y * w + (w - 1 - x),
+		(x: number, y: number) => (h - 1 - y) * w + (w - 1 - x),
+		(x: number, y: number) => (h - 1 - y) * w + x,
+		(x: number, y: number) => x * w + y,
+		(x: number, y: number) => (h - 1 - x) * w + y,
+		(x: number, y: number) => (h - 1 - x) * w + (w - 1 - y),
+		(x: number, y: number) => x * w + (w - 1 - y),
+	][orientation - 2]!;
+	const out = new Uint8Array(width * height * 4);
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			const from = source(x, y) * 4;
+			const to = (y * width + x) * 4;
+			out[to] = data[from]!;
+			out[to + 1] = data[from + 1]!;
+			out[to + 2] = data[from + 2]!;
+			out[to + 3] = data[from + 3]!;
+		}
+	}
+	return {width, height, data: out};
 }
 
 export async function loadImage(path: string): Promise<Bitmap> {

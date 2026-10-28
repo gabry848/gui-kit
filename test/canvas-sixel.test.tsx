@@ -1,6 +1,6 @@
 import {expect, test} from 'bun:test';
 import {encodeSixel, quantize} from '../src/kit/canvas/sixel.js';
-import {sixelFor} from '../src/kit/graphics.js';
+import {sixelFor, useGraphicsSuspend} from '../src/kit/graphics.js';
 import {Box, Canvas, Image, Text, useKeys, useState, type Bitmap, type Caps} from '../src/kit/index.js';
 import {headless, TEST_CAPS} from '../src/kit/testing.js';
 
@@ -241,5 +241,151 @@ test('Canvas sixel backend draws through the layer; without sixel caps it falls 
 	await text.settle(60);
 	expect(text.screen()).toMatch(/[⠁-⣿]/);
 	expect(text.output()).not.toContain(DCS);
+	await text.exit();
+});
+
+const BSU = `${ESC}[?2026h`;
+const ESU = `${ESC}[?2026l`;
+
+/** The frames (BSU ... ESU) in written bytes, each with the offsets of a marker and of every sixel image. */
+function frames(bytes: string, marker: string) {
+	return bytes.split(BSU).slice(1).map(frame => {
+		const body = frame.slice(0, Math.max(0, frame.indexOf(ESU)));
+		return {body, marker: body.indexOf(marker), sixels: [...body.matchAll(/\u001BP0;1;0q/g)].map(match => match.index)};
+	});
+}
+
+test('sixel Image: a box that shrinks is erased under the frame that moves the text, not after it', async () => {
+	function Shrink() {
+		const [width, setWidth] = useState(10);
+		const [height, setHeight] = useState(3);
+		useKeys([
+			{keys: 's', desc: 'Narrower', run: () => setWidth(5)},
+			{keys: 'S', desc: 'Shorter', run: () => setHeight(1)},
+		]);
+		return (
+			<Box flexDirection="column">
+				<Box>
+					<Image src={RED} width={width} height={height} fit="fill" />
+					<Text>side text</Text>
+				</Box>
+				<Text>row below</Text>
+			</Box>
+		);
+	}
+	const app = await headless(<Shrink />, {cols: 40, rows: 10, caps: SIXEL_CAPS});
+	await app.settle(80);
+	expect(app.lines()[0]).toBe('          side text');
+	const before = app.output().length;
+	await app.press('s');
+	await app.settle(80);
+	// The text moved left into the old image's cells and stays there.
+	expect(app.lines()[0]).toBe('     side text');
+	// The old 10-column box is erased only inside a frame, before Ink's text.
+	const after = app.output().slice(before);
+	const outside = after.split(BSU).map(part => part.slice(part.indexOf(ESU) + 1)).join('');
+	expect(outside).not.toContain(`${ESC}[10X`);
+	expect(frames(after, 'side text').some(frame => frame.marker > frame.body.indexOf(`${ESC}[10X`) && frame.body.includes(`${ESC}[10X`))).toBe(true);
+
+	// Shorter: the line below moves up into the image's old rows.
+	await app.press('S');
+	await app.settle(80);
+	expect(app.lines()[0]).toBe('     side text');
+	expect(app.lines()[1]).toBe('row below');
+	await app.exit();
+});
+
+function Cover({text}: {text: string}) {
+	useGraphicsSuspend();
+	return (
+		<Box position="absolute" marginTop={1} marginLeft={1} borderStyle="round" paddingX={1}>
+			<Text>{text}</Text>
+		</Box>
+	);
+}
+
+test('useGraphicsSuspend: images are hidden in the frame that draws a cover and come back when it closes', async () => {
+	function Covered() {
+		const [open, setOpen] = useState(0);
+		const [n, setN] = useState(0);
+		useKeys([
+			{keys: 'o', desc: 'Open one more', run: () => setOpen(value => value + 1)},
+			{keys: 'c', desc: 'Close one', run: () => setOpen(value => Math.max(0, value - 1))},
+			{keys: 'x', desc: 'Count', run: () => setN(value => value + 1)},
+		]);
+		return (
+			<Box flexDirection="column">
+				<Image src={RED} width={20} height={6} fit="fill" />
+				<Text>count {n}</Text>
+				{open > 0 ? <Cover text="first cover" /> : null}
+				{open > 1 ? <Cover text="second cover" /> : null}
+			</Box>
+		);
+	}
+	const app = await headless(<Covered />, {cols: 30, rows: 10, caps: SIXEL_CAPS});
+	await app.settle(80);
+	expect(count(app.output(), DCS)).toBe(1);
+
+	let mark = app.output().length;
+	await app.press('o');
+	expect(app.screen()).toContain('first cover');
+	let written = app.output().slice(mark);
+	// No image after the cover's text, and the image's cells are erased before it.
+	expect(count(written, DCS)).toBe(0);
+	const opening = frames(written, 'first cover').find(frame => frame.marker >= 0)!;
+	expect(opening.body.indexOf(`${ESC}[1;1H${ESC}[20X`)).toBeGreaterThan(-1);
+	expect(opening.body.indexOf(`${ESC}[1;1H${ESC}[20X`)).toBeLessThan(opening.marker);
+
+	// Other frames while it is open draw no image either, and nesting keeps them hidden.
+	mark = app.output().length;
+	await app.press('x');
+	await app.press('o');
+	await app.press('c');
+	expect(app.screen()).toContain('count 1');
+	expect(app.screen()).toContain('first cover');
+	expect(count(app.output().slice(mark), DCS)).toBe(0);
+
+	// Closing the last one draws the image again.
+	mark = app.output().length;
+	await app.press('c');
+	await app.settle(40);
+	expect(app.screen()).not.toContain('cover');
+	written = app.output().slice(mark);
+	expect(count(written, DCS)).toBeGreaterThanOrEqual(1);
+	expect(written).toContain(`${ESC}[1;1H${DCS}"1;1;80;36`);
+	await app.exit();
+});
+
+test('useGraphicsSuspend(active) follows its argument while mounted, and does nothing without sixel', async () => {
+	function Toggle() {
+		const [shown, setShown] = useState(false);
+		useKeys([{keys: 't', desc: 'Toggle', run: () => setShown(value => !value)}]);
+		useGraphicsSuspend(shown);
+		return (
+			<Box flexDirection="column">
+				<Image src={RED} width={5} height={2} fit="fill" />
+				<Text>{shown ? 'toast' : 'none'}</Text>
+			</Box>
+		);
+	}
+	const app = await headless(<Toggle />, {cols: 20, rows: 6, caps: SIXEL_CAPS});
+	await app.settle(80);
+	let mark = app.output().length;
+	await app.press('t');
+	expect(app.screen()).toContain('toast');
+	expect(app.output().slice(mark)).toContain(`${ESC}[1;1H${ESC}[5X`);
+	expect(count(app.output().slice(mark), DCS)).toBe(0);
+	mark = app.output().length;
+	await app.press('t');
+	await app.settle(40);
+	expect(app.screen()).toContain('none');
+	expect(count(app.output().slice(mark), DCS)).toBeGreaterThanOrEqual(1);
+	await app.exit();
+
+	// Half blocks are text: nothing to hide.
+	const text = await headless(<Toggle />, {cols: 20, rows: 6});
+	await text.press('t');
+	expect(text.screen()).toContain('▀▀▀▀▀');
+	expect(text.screen()).toContain('toast');
 	await text.exit();
 });

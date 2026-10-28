@@ -8,9 +8,15 @@
 // An image's box must be blank in Ink's text (the components render nothing
 // there). That makes erasing a moved or removed image safe: the cells it
 // covered hold spaces for Ink too. Erasing happens at the start of a frame,
-// before Ink writes, so Ink's new text lands on top.
+// before Ink writes, so Ink's new text lands on top. A box that shrinks is
+// seen in the frame that shrinks it, since its size is read from the layout.
+//
+// Text Ink draws over an image's box from elsewhere, such as a popup or a
+// toast, breaks that rule: the image would be drawn again on top of it. So
+// whatever floats over the screen calls useGraphicsSuspend while it is
+// shown, and every image is hidden until the last such call ends.
 
-import {createContext, useContext} from 'react';
+import {createContext, useContext, useInsertionEffect} from 'react';
 import type {DOMElement} from 'ink';
 import type {Bitmap} from './canvas/bitmap.js';
 import {encodeSixel} from './canvas/sixel.js';
@@ -68,6 +74,8 @@ export class GraphicsLayer {
 	private damaged = false;
 	private inFrame = false;
 	private active = true;
+	/** Open suspend() calls; images are hidden while there are any. */
+	private suspended = 0;
 	private scheduled: ReturnType<typeof setImmediate> | undefined;
 
 	constructor(private readonly out: NodeJS.WriteStream, private readonly sync: boolean) {
@@ -90,6 +98,29 @@ export class GraphicsLayer {
 		else if (old) this.entries.delete(key);
 		else return;
 		this.schedule();
+	}
+
+	/**
+	 * Hides every image until the returned function is called; calls nest.
+	 * Images on screen are erased at the start of the next frame Ink writes,
+	 * under its text, so call it before Ink draws what covers them, as
+	 * useGraphicsSuspend does. When the last call ends, they are drawn again.
+	 */
+	suspend(): () => void {
+		if (++this.suspended === 1) {
+			for (const entry of this.entries.values()) {
+				if (entry.drawn) this.stale.push(entry.drawn);
+				entry.drawn = undefined;
+			}
+		}
+		let resumed = false;
+		return () => {
+			if (resumed) return;
+			resumed = true;
+			if (--this.suspended > 0) return;
+			for (const entry of this.entries.values()) entry.dirty = true;
+			this.schedule();
+		};
 	}
 
 	dispose() {
@@ -148,12 +179,17 @@ export class GraphicsLayer {
 		if (data) this.out.write(data);
 	}
 
-	/** Where an image is on screen now, kept off the last row so it never scrolls the screen. */
+	/**
+	 * Where an image is on screen now: within its box as laid out for the
+	 * frame being drawn, which may be smaller than the bitmap until the
+	 * component catches up, and off the last row so it never scrolls the screen.
+	 */
 	private rectOf(entry: Entry): Rect | undefined {
-		if (!entry.node.yogaNode) return undefined;
+		const yoga = entry.node.yogaNode;
+		if (!yoga) return undefined;
 		const {x, y} = absolutePosition(entry.node);
-		const cols = Math.min(entry.cols, (this.out.columns || 80) - x);
-		const rows = Math.min(entry.rows, (this.out.rows || 24) - 1 - y);
+		const cols = Math.min(entry.cols, Math.floor(yoga.getComputedWidth()), (this.out.columns || 80) - x);
+		const rows = Math.min(entry.rows, Math.floor(yoga.getComputedHeight()), (this.out.rows || 24) - 1 - y);
 		return cols > 0 && rows > 0 ? {x, y, cols, rows} : undefined;
 	}
 
@@ -178,6 +214,7 @@ export class GraphicsLayer {
 
 	/** Draws every image, or only those not on screen yet. */
 	private draw(all: boolean): string {
+		if (this.suspended > 0) return '';
 		let out = '';
 		for (const entry of this.entries.values()) {
 			if (!all && !entry.dirty) continue;
@@ -200,4 +237,18 @@ export const GraphicsContext = createContext<GraphicsLayer | undefined>(undefine
 
 export function useGraphics(): GraphicsLayer | undefined {
 	return useContext(GraphicsContext);
+}
+
+/**
+ * Hides every sixel image while `active` is true, for anything Ink draws
+ * over the screen: popups, dialogs, which-key, toasts. Kitty images need
+ * nothing, their placeholders are text that Ink overwrites. Call it on
+ * every render, before any early return, with whether the cover is shown.
+ */
+export function useGraphicsSuspend(active = true) {
+	const layer = useGraphics();
+	// Insertion effects run before Ink writes the frame of the same commit
+	// (layout and passive effects run after it), so the images are already
+	// hidden in the frame that draws the cover and back in the one that removes it.
+	useInsertionEffect(() => (active && layer ? layer.suspend() : undefined), [layer, active]);
 }
