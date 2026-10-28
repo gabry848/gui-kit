@@ -10,17 +10,22 @@
 // covered hold spaces for Ink too. Erasing happens at the start of a frame,
 // before Ink writes, so Ink's new text lands on top. A box that shrinks is
 // seen in the frame that shrinks it, since its size is read from the layout.
+// An image is cut like Ink cuts text: to the inside of every ancestor with
+// overflow="hidden", and off the last row.
 //
 // Text Ink draws over an image's box from elsewhere, such as a popup or a
 // toast, breaks that rule: the image would be drawn again on top of it. So
 // whatever floats over the screen calls useGraphicsSuspend while it is
-// shown, and every image is hidden until the last such call ends.
+// shown. While any such call is active, each frame the layer finds what Ink
+// draws after an image, in tree order, the order Ink paints in (text,
+// borders, backgrounds), and hides the images that overlaps. An image inside
+// the floating box comes after the box's own border and background, so it
+// stays, and so do the images the box doesn't reach.
 
 import {createContext, useContext, useInsertionEffect} from 'react';
 import type {DOMElement} from 'ink';
 import type {Bitmap} from './canvas/bitmap.js';
 import {encodeSixel} from './canvas/sixel.js';
-import {absolutePosition} from './layout.js';
 
 const BSU = '\u001B[?2026h';
 const ESU = '\u001B[?2026l';
@@ -42,27 +47,146 @@ export type Placement = {
 };
 
 type Rect = {x: number; y: number; cols: number; rows: number};
-type Entry = Placement & {encoded?: {cols: number; rows: number; data: string}; drawn: Rect | undefined; dirty: boolean};
+/** Where an image is drawn: the cells it shows, and the bitmap cell they start at. */
+type Spot = Rect & {dx: number; dy: number};
+type Entry = Placement & {
+	/** The sixel for the spot `key` (cols, rows, dx, dy) names. */
+	encoded?: {key: string; data: string};
+	/** Where the image goes in the frame being drawn; undefined when it is hidden or cut away. */
+	target: Spot | undefined;
+	/** Where it is on screen now. */
+	drawn: Spot | undefined;
+};
 
 /**
- * The first `cols` by `rows` cells of a bitmap as sixel. The height is cut
- * to a multiple of 6 pixels, so the last band never reaches the row below
- * the box, where it could move the cursor past the bottom and scroll.
+ * `cols` by `rows` cells of a bitmap as sixel, from the cell `dx`, `dy`
+ * (0, 0 is the top-left corner). The height is cut to a multiple of 6
+ * pixels, so the last band never reaches the row below the box, where it
+ * could move the cursor past the bottom and scroll.
  */
-export function sixelFor(bitmap: Bitmap, cols: number, rows: number, cell: {w: number; h: number}): string {
-	const width = Math.min(bitmap.width, cols * cell.w);
-	const height = Math.floor(Math.min(bitmap.height, rows * cell.h) / 6) * 6;
-	if (width <= 0 || height <= 0) return '';
-	if (width === bitmap.width && height === bitmap.height) return encodeSixel(bitmap);
+export function sixelFor(bitmap: Bitmap, cols: number, rows: number, cell: {w: number; h: number}, dx = 0, dy = 0): string {
+	const left = dx * cell.w;
+	const top = dy * cell.h;
+	const width = Math.min(bitmap.width - left, cols * cell.w);
+	const height = Math.floor(Math.min(bitmap.height - top, rows * cell.h) / 6) * 6;
+	if (width <= 0 || height <= 0 || left < 0 || top < 0) return '';
+	if (left === 0 && top === 0 && width === bitmap.width && height === bitmap.height) return encodeSixel(bitmap);
 	const data = new Uint8ClampedArray(width * height * 4);
 	for (let y = 0; y < height; y++) {
-		data.set(bitmap.data.subarray(y * bitmap.width * 4, (y * bitmap.width + width) * 4), y * width * 4);
+		const start = ((top + y) * bitmap.width + left) * 4;
+		data.set(bitmap.data.subarray(start, start + width * 4), y * width * 4);
 	}
 	return encodeSixel({width, height, data});
 }
 
-const same = (a: Rect | undefined, b: Rect | undefined) =>
-	a === b || (a !== undefined && b !== undefined && a.x === b.x && a.y === b.y && a.cols === b.cols && a.rows === b.rows);
+const same = (a: Spot | undefined, b: Spot | undefined) =>
+	a === b || (a !== undefined && b !== undefined && a.x === b.x && a.y === b.y && a.cols === b.cols && a.rows === b.rows && a.dx === b.dx && a.dy === b.dy);
+
+/** A screen area in cells, x1 and y1 included, x2 and y2 not. */
+type Area = {x1: number; y1: number; x2: number; y2: number};
+
+const meet = (a: Area, b: Area): Area => ({x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), x2: Math.min(a.x2, b.x2), y2: Math.min(a.y2, b.y2)});
+const empty = (a: Area) => a.x1 >= a.x2 || a.y1 >= a.y2;
+
+/** Not laid out by Ink: display="none", or hidden by Suspense. */
+const undisplayed = (node: DOMElement) => node.isHidden === true || node.style.display === 'none';
+
+/** The border width on each side, as Ink gives it to Yoga. */
+function borders(node: DOMElement) {
+	const {style} = node;
+	if (!style.borderStyle) return {left: 0, right: 0, top: 0, bottom: 0};
+	return {left: style.borderLeft === false ? 0 : 1, right: style.borderRight === false ? 0 : 1, top: style.borderTop === false ? 0 : 1, bottom: style.borderBottom === false ? 0 : 1};
+}
+
+/** Ink's contentOffsetX/Y (scrolling): whole cells, anything else is 0. */
+const offset = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : 0);
+
+/** The area a box at x, y lets its children show in, as Ink clips them: inside its border on each axis with overflow 'hidden'. */
+function clipOf(node: DOMElement, x: number, y: number, clip: Area): Area {
+	const {style, yogaNode} = node;
+	if (node.nodeName !== 'ink-box' || !yogaNode) return clip;
+	const side = borders(node);
+	let area = clip;
+	if ((style.overflowX ?? style.overflow) === 'hidden') {
+		area = meet(area, {x1: x + side.left, x2: x + yogaNode.getComputedWidth() - side.right, y1: -Infinity, y2: Infinity});
+	}
+	if ((style.overflowY ?? style.overflow) === 'hidden') {
+		area = meet(area, {x1: -Infinity, x2: Infinity, y1: y + side.top, y2: y + yogaNode.getComputedHeight() - side.bottom});
+	}
+	return area;
+}
+
+/**
+ * Where Ink puts a node on screen, and the area its ancestors let it show
+ * in, worked out the way Ink's renderer does; undefined when it is not shown.
+ */
+function placeOf(node: DOMElement, screen: Area): {x: number; y: number; clip: Area} | undefined {
+	const chain: DOMElement[] = [];
+	for (let current: DOMElement | undefined = node; current; current = current.parentNode) chain.push(current);
+	chain.reverse();
+	let x = 0;
+	let y = 0;
+	let clip = screen;
+	for (const [index, current] of chain.entries()) {
+		if (!current.yogaNode || undisplayed(current)) return undefined;
+		x += current.yogaNode.getComputedLeft();
+		y += current.yogaNode.getComputedTop();
+		if (index === chain.length - 1) break;
+		clip = clipOf(current, x, y, clip);
+		x -= offset(current.style.contentOffsetX);
+		y -= offset(current.style.contentOffsetY);
+	}
+	return {x, y, clip};
+}
+
+const hasText = (node: DOMElement): boolean =>
+	node.childNodes.some(child => (child.nodeName === '#text' ? child.nodeValue.length > 0 : hasText(child)));
+
+/**
+ * What Ink draws in a frame, in the order it draws it: the cells of every
+ * text, border and background, cut as Ink cuts them. For each node in
+ * `wanted`, `after` is the position in that order just past its subtree, so
+ * the paint with an order from there on lands over it.
+ */
+function paintsOf(root: DOMElement, screen: Area, wanted: Set<DOMElement>) {
+	const paints: Array<{order: number; area: Area}> = [];
+	const after = new Map<DOMElement, number>();
+	let order = 0;
+	const visit = (node: DOMElement, offsetX: number, offsetY: number, clip: Area) => {
+		const {yogaNode} = node;
+		if (!yogaNode || node.internal_static || undisplayed(node)) return;
+		const x = offsetX + yogaNode.getComputedLeft();
+		const y = offsetY + yogaNode.getComputedTop();
+		const width = yogaNode.getComputedWidth();
+		const height = yogaNode.getComputedHeight();
+		const at = order++;
+		const paint = (area: Area) => {
+			const cut = meet(area, clip);
+			if (!empty(cut)) paints.push({order: at, area: cut});
+		};
+		if (node.nodeName === 'ink-text') {
+			if (hasText(node)) paint({x1: x, y1: y, x2: x + width, y2: y + height});
+		} else if (node.nodeName === 'ink-box' || node.nodeName === 'ink-root') {
+			if (node.nodeName === 'ink-box') {
+				const side = borders(node);
+				if (node.style.backgroundColor) paint({x1: x + side.left, y1: y + side.top, x2: x + width - side.right, y2: y + height - side.bottom});
+				if (side.top) paint({x1: x, y1: y, x2: x + width, y2: y + 1});
+				if (side.bottom) paint({x1: x, y1: y + height - 1, x2: x + width, y2: y + height});
+				if (side.left) paint({x1: x, y1: y, x2: x + 1, y2: y + height});
+				if (side.right) paint({x1: x + width - 1, y1: y, x2: x + width, y2: y + height});
+			}
+			const inner = clipOf(node, x, y, clip);
+			for (const child of node.childNodes) {
+				if (child.nodeName !== '#text') visit(child, x - offset(node.style.contentOffsetX), y - offset(node.style.contentOffsetY), inner);
+			}
+		}
+		if (wanted.has(node)) after.set(node, order);
+	};
+	visit(root, 0, 0, screen);
+	return {paints, after};
+}
+
+const overlaps = (area: Area, rect: Rect) => area.x1 < rect.x + rect.cols && rect.x < area.x2 && area.y1 < rect.y + rect.rows && rect.y < area.y2;
 
 export class GraphicsLayer {
 	/** The stream to give Ink instead of the terminal. */
@@ -74,8 +198,8 @@ export class GraphicsLayer {
 	private damaged = false;
 	private inFrame = false;
 	private active = true;
-	/** Open suspend() calls; images are hidden while there are any. */
-	private suspended = 0;
+	/** Open suspend() calls: while there are any, images under what Ink draws after them are hidden. */
+	private covers = 0;
 	private scheduled: ReturnType<typeof setImmediate> | undefined;
 
 	constructor(private readonly out: NodeJS.WriteStream, private readonly sync: boolean) {
@@ -94,31 +218,28 @@ export class GraphicsLayer {
 		const old = this.entries.get(key);
 		if (old && placement && old.bitmap === placement.bitmap && old.node === placement.node) return;
 		if (old?.drawn) this.stale.push(old.drawn);
-		if (placement) this.entries.set(key, {...placement, drawn: undefined, dirty: true});
+		if (placement) this.entries.set(key, {...placement, target: undefined, drawn: undefined});
 		else if (old) this.entries.delete(key);
 		else return;
 		this.schedule();
 	}
 
 	/**
-	 * Hides every image until the returned function is called; calls nest.
-	 * Images on screen are erased at the start of the next frame Ink writes,
-	 * under its text, so call it before Ink draws what covers them, as
-	 * useGraphicsSuspend does. When the last call ends, they are drawn again.
+	 * Something floats over the screen until the returned function is
+	 * called; calls nest. While any is open, every frame hides the images
+	 * that what Ink draws after them overlaps: images under a popup, not
+	 * those inside it or out of its reach. A hidden image is erased at the
+	 * start of the frame, under Ink's text, so call it before Ink draws the
+	 * cover, as useGraphicsSuspend does, and it is drawn again once uncovered.
 	 */
 	suspend(): () => void {
-		if (++this.suspended === 1) {
-			for (const entry of this.entries.values()) {
-				if (entry.drawn) this.stale.push(entry.drawn);
-				entry.drawn = undefined;
-			}
-		}
+		this.covers++;
+		this.schedule();
 		let resumed = false;
 		return () => {
 			if (resumed) return;
 			resumed = true;
-			if (--this.suspended > 0) return;
-			for (const entry of this.entries.values()) entry.dirty = true;
+			this.covers--;
 			this.schedule();
 		};
 	}
@@ -179,29 +300,58 @@ export class GraphicsLayer {
 		if (data) this.out.write(data);
 	}
 
-	/**
-	 * Where an image is on screen now: within its box as laid out for the
-	 * frame being drawn, which may be smaller than the bitmap until the
-	 * component catches up, and off the last row so it never scrolls the screen.
-	 */
-	private rectOf(entry: Entry): Rect | undefined {
-		const yoga = entry.node.yogaNode;
-		if (!yoga) return undefined;
-		const {x, y} = absolutePosition(entry.node);
-		const cols = Math.min(entry.cols, Math.floor(yoga.getComputedWidth()), (this.out.columns || 80) - x);
-		const rows = Math.min(entry.rows, Math.floor(yoga.getComputedHeight()), (this.out.rows || 24) - 1 - y);
-		return cols > 0 && rows > 0 ? {x, y, cols, rows} : undefined;
+	private screen(): Area {
+		return {x1: 0, y1: 0, x2: this.out.columns || 80, y2: this.out.rows || 24};
 	}
 
-	/** Blanks the cells of images that moved or went away. */
+	/**
+	 * Where an image goes in the frame being drawn: its box as laid out now,
+	 * which may be smaller than the bitmap until the component catches up,
+	 * cut to its overflow="hidden" ancestors as Ink cuts text, and off the
+	 * last row so it never scrolls the screen.
+	 */
+	private spotOf(entry: Entry): Spot | undefined {
+		const yoga = entry.node.yogaNode;
+		if (!yoga) return undefined;
+		const screen = this.screen();
+		const place = placeOf(entry.node, {...screen, y2: screen.y2 - 1});
+		if (!place) return undefined;
+		const {x, y} = place;
+		const box = meet(place.clip, {
+			x1: x,
+			y1: y,
+			x2: x + Math.min(entry.cols, Math.floor(yoga.getComputedWidth())),
+			y2: y + Math.min(entry.rows, Math.floor(yoga.getComputedHeight())),
+		});
+		if (empty(box)) return undefined;
+		return {x: box.x1, y: box.y1, cols: box.x2 - box.x1, rows: box.y2 - box.y1, dx: box.x1 - x, dy: box.y1 - y};
+	}
+
+	/** Sets each image's target for the frame being drawn, from the current layout. */
+	private plan() {
+		for (const entry of this.entries.values()) entry.target = this.spotOf(entry);
+		if (this.covers === 0) return;
+		// Something floats over the screen: hide the images it draws over.
+		const shown = [...this.entries.values()].filter(entry => entry.target);
+		let root: DOMElement | undefined;
+		for (let node: DOMElement | undefined = shown[0]?.node; node; node = node.parentNode) root = node;
+		if (!root || root.nodeName !== 'ink-root') return;
+		const {paints, after} = paintsOf(root, this.screen(), new Set(shown.map(entry => entry.node)));
+		for (const entry of shown) {
+			const from = after.get(entry.node);
+			if (from !== undefined && paints.some(paint => paint.order >= from && overlaps(paint.area, entry.target!))) entry.target = undefined;
+		}
+	}
+
+	/** Blanks the cells of images that moved, went away or got covered. */
 	private erase(): string {
-		const rects = this.stale;
+		const rects: Rect[] = this.stale;
 		this.stale = [];
+		this.plan();
 		for (const entry of this.entries.values()) {
-			if (entry.drawn && !same(entry.drawn, this.rectOf(entry))) {
+			if (entry.drawn && !same(entry.drawn, entry.target)) {
 				rects.push(entry.drawn);
 				entry.drawn = undefined;
-				entry.dirty = true;
 			}
 		}
 		if (rects.length === 0) return '';
@@ -212,21 +362,19 @@ export class GraphicsLayer {
 		return out + RESTORE;
 	}
 
-	/** Draws every image, or only those not on screen yet. */
+	/** Draws every image with a target, or only those not on screen yet; erase() sets the targets. */
 	private draw(all: boolean): string {
-		if (this.suspended > 0) return '';
 		let out = '';
 		for (const entry of this.entries.values()) {
-			if (!all && !entry.dirty) continue;
-			entry.dirty = false;
-			const rect = this.rectOf(entry);
-			entry.drawn = rect;
-			if (!rect) continue;
-			if (entry.encoded?.cols !== rect.cols || entry.encoded.rows !== rect.rows) {
-				const whole = rect.cols === entry.cols && rect.rows === entry.rows && entry.sixel !== undefined;
-				entry.encoded = {cols: rect.cols, rows: rect.rows, data: whole ? entry.sixel! : sixelFor(entry.bitmap, rect.cols, rect.rows, entry.cell)};
+			const spot = entry.target;
+			if (!spot || (!all && entry.drawn)) continue;
+			entry.drawn = spot;
+			const key = `${spot.cols},${spot.rows},${spot.dx},${spot.dy}`;
+			if (entry.encoded?.key !== key) {
+				const whole = spot.dx === 0 && spot.dy === 0 && spot.cols === entry.cols && spot.rows === entry.rows && entry.sixel !== undefined;
+				entry.encoded = {key, data: whole ? entry.sixel! : sixelFor(entry.bitmap, spot.cols, spot.rows, entry.cell, spot.dx, spot.dy)};
 			}
-			out += `\u001B[${rect.y + 1};${rect.x + 1}H` + entry.encoded.data;
+			out += `\u001B[${spot.y + 1};${spot.x + 1}H` + entry.encoded.data;
 		}
 		return out ? SAVE + out + RESTORE : '';
 	}
@@ -240,15 +388,17 @@ export function useGraphics(): GraphicsLayer | undefined {
 }
 
 /**
- * Hides every sixel image while `active` is true, for anything Ink draws
- * over the screen: popups, dialogs, which-key, toasts. Kitty images need
- * nothing, their placeholders are text that Ink overwrites. Call it on
- * every render, before any early return, with whether the cover is shown.
+ * Hides the sixel images under what Ink draws while `active` is true, for
+ * anything drawn over the screen: popups, dialogs, which-key, toasts.
+ * Images inside the floating box stay, and so do the ones it doesn't
+ * overlap. Kitty images need nothing, their placeholders are text that Ink
+ * overwrites. Call it on every render, before any early return, with
+ * whether the cover is shown.
  */
 export function useGraphicsSuspend(active = true) {
 	const layer = useGraphics();
 	// Insertion effects run before Ink writes the frame of the same commit
-	// (layout and passive effects run after it), so the images are already
-	// hidden in the frame that draws the cover and back in the one that removes it.
+	// (layout and passive effects run after it), so the images under the cover
+	// are already hidden in the frame that draws it and back in the one that removes it.
 	useInsertionEffect(() => (active && layer ? layer.suspend() : undefined), [layer, active]);
 }

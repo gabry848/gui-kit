@@ -1,7 +1,7 @@
 import {expect, test} from 'bun:test';
 import {encodeSixel, quantize} from '../src/kit/canvas/sixel.js';
 import {sixelFor, useGraphicsSuspend} from '../src/kit/graphics.js';
-import {Box, Canvas, Image, Text, useKeys, useState, type Bitmap, type Caps} from '../src/kit/index.js';
+import {Box, Canvas, Image, Modal, Shell, Split, Text, useKeys, useNotify, useState, type Bitmap, type Caps} from '../src/kit/index.js';
 import {headless, TEST_CAPS} from '../src/kit/testing.js';
 
 const ESC = '\u001B';
@@ -364,7 +364,8 @@ test('useGraphicsSuspend(active) follows its argument while mounted, and does no
 		return (
 			<Box flexDirection="column">
 				<Image src={RED} width={5} height={2} fit="fill" />
-				<Text>{shown ? 'toast' : 'none'}</Text>
+				<Text>{shown ? 'shown' : 'none'}</Text>
+				{shown ? <Box position="absolute" marginLeft={2}><Text>toast</Text></Box> : null}
 			</Box>
 		);
 	}
@@ -385,7 +386,228 @@ test('useGraphicsSuspend(active) follows its argument while mounted, and does no
 	// Half blocks are text: nothing to hide.
 	const text = await headless(<Toggle />, {cols: 20, rows: 6});
 	await text.press('t');
-	expect(text.screen()).toContain('▀▀▀▀▀');
-	expect(text.screen()).toContain('toast');
+	expect(text.lines()[0]).toBe('▀▀toast');
+	expect(text.lines()[1]).toBe('▀▀▀▀▀');
 	await text.exit();
+});
+
+/** The written sixel images, each with its 1-based position and raster size in pixels. */
+function sixels(bytes: string) {
+	return [...bytes.matchAll(/\u001B\[(\d+);(\d+)H\u001BP0;1;0q"1;1;(\d+);(\d+)/g)].map(match => ({
+		row: Number(match[1]),
+		col: Number(match[2]),
+		width: Number(match[3]),
+		height: Number(match[4]),
+		at: match.index,
+	}));
+}
+const erased = (bytes: string, row: number, col: number, cols: number) => bytes.includes(`${ESC}[${row};${col}H${ESC}[${cols}X`);
+// Made once: a new bitmap on every render would be a new image each time.
+const RED4 = RED;
+const GREEN4 = bitmap(4, 4, () => [0, 255, 0, 255]);
+const BLUE4 = bitmap(4, 4, () => [0, 0, 255, 255]);
+
+test('sixel: an Image inside a Modal is drawn over the dialog; only images under the dialog hide', async () => {
+	function Preview() {
+		const [open, setOpen] = useState(false);
+		const [n, setN] = useState(0);
+		useKeys([
+			{keys: 'o', desc: 'Open', run: () => setOpen(true)},
+			{keys: 'x', desc: 'Count', run: () => setN(value => value + 1)},
+		]);
+		return (
+			<Box flexDirection="column">
+				{/* Outside the dialog: top left, 6x2 cells, 24x12 px. */}
+				<Image src={RED4} width={6} height={2} fit="fill" />
+				{/* Under the dialog: 20x6 cells from column 16, row 3 (1-based), 80x36 px. */}
+				<Box marginLeft={15}>
+					<Image src={BLUE4} width={20} height={6} fit="fill" />
+				</Box>
+				{open ? (
+					<Modal title="Preview" onClose={() => setOpen(false)} bindings={[{keys: 'x', desc: 'Count', run: () => setN(value => value + 1)}]}>
+						<Image src={GREEN4} width={12} height={4} fit="fill" />
+						<Text>{n > 0 ? 'counted' : 'waiting'}</Text>
+					</Modal>
+				) : null}
+			</Box>
+		);
+	}
+	const app = await headless(<Shell title="t"><Preview /></Shell>, {cols: 50, rows: 16, caps: SIXEL_CAPS});
+	await app.settle(80);
+	expect(sixels(app.output()).map(({row, col, width}) => [row, col, width])).toEqual([[1, 1, 24], [3, 16, 80]]);
+
+	let mark = app.output().length;
+	await app.press('o');
+	await app.settle(80);
+	const lines = app.lines();
+	const title = lines.findIndex(line => line.includes('Preview'));
+	expect(title).toBeGreaterThan(-1);
+	let written = app.output().slice(mark);
+	// The image under the dialog is erased before Ink draws the dialog; the one outside it stays.
+	const opening = frames(written, 'Preview').find(frame => frame.marker >= 0)!;
+	expect(opening.body.indexOf(`${ESC}[3;16H${ESC}[20X`)).toBeGreaterThan(-1);
+	expect(opening.body.indexOf(`${ESC}[3;16H${ESC}[20X`)).toBeLessThan(opening.marker);
+	expect(erased(written, 1, 1, 6)).toBe(false);
+	// The image in the dialog is drawn: two rows below the title (a blank row between), 12x4 cells.
+	const inside = sixels(written).filter(image => image.width === 48);
+	expect(inside.length).toBeGreaterThanOrEqual(1);
+	expect(inside[0]).toMatchObject({row: title + 3, col: lines[title]!.indexOf('Preview') + 1, height: 24});
+	expect(sixels(written).some(image => image.width === 80)).toBe(false);
+
+	// A frame while the dialog is open redraws the images it doesn't cover, after Ink's text.
+	mark = app.output().length;
+	await app.press('x');
+	expect(app.screen()).toContain('counted');
+	written = app.output().slice(mark);
+	const frame = frames(written, 'counted').find(part => part.marker >= 0)!;
+	const drawn = sixels(frame.body);
+	expect(drawn.map(image => image.width).sort()).toEqual([24, 48]);
+	expect(drawn.every(image => image.at > frame.marker)).toBe(true);
+
+	// Closing it brings the covered image back.
+	mark = app.output().length;
+	await app.press('<Esc>');
+	await app.settle(60);
+	expect(app.screen()).not.toContain('Preview');
+	expect(sixels(app.output().slice(mark)).some(image => image.width === 80 && image.row === 3 && image.col === 16)).toBe(true);
+	await app.exit();
+});
+
+test('sixel: a toast or the which-key menu hides only the images it overlaps', async () => {
+	function Board() {
+		const notify = useNotify();
+		useKeys([
+			{keys: 'n', desc: 'Notify', run: () => notify('boom', {kind: 'error'})},
+			{keys: 'gx', desc: 'Go x', run: () => {}},
+			{keys: 'gy', desc: 'Go y', run: () => {}},
+		]);
+		return (
+			<Box flexDirection="column">
+				{/* Under the toast at the top right: columns 37-46, rows 1-3. */}
+				<Box marginLeft={36}>
+					<Image src={RED4} width={10} height={3} fit="fill" />
+				</Box>
+				{/* Clear of both: columns 1-10, rows 4-6. */}
+				<Image src={GREEN4} width={10} height={3} fit="fill" />
+				<Box height={3} />
+				{/* Under the which-key menu at the bottom right: columns 31-48, rows 10-13. */}
+				<Box marginLeft={30}>
+					<Image src={BLUE4} width={18} height={4} fit="fill" />
+				</Box>
+			</Box>
+		);
+	}
+	const app = await headless(<Shell title="t"><Board /></Shell>, {cols: 50, rows: 16, caps: SIXEL_CAPS});
+	await app.settle(80);
+	expect(sixels(app.output()).map(({row, col}) => [row, col])).toEqual([[1, 37], [4, 1], [10, 31]]);
+
+	// An error toast stays until dismissed: only the image under it goes.
+	let mark = app.output().length;
+	await app.press('n');
+	await app.settle(80);
+	expect(app.lines()[1]).toContain('boom');
+	let written = app.output().slice(mark);
+	expect(erased(written, 1, 37, 10)).toBe(true);
+	expect(erased(written, 4, 1, 10)).toBe(false);
+	expect(erased(written, 10, 31, 18)).toBe(false);
+	const toastFrame = frames(written, 'boom').find(frame => frame.marker >= 0)!;
+	expect(sixels(toastFrame.body).map(({row, col}) => [row, col])).toEqual([[4, 1], [10, 31]]);
+	mark = app.output().length;
+	await app.press('<Esc>');
+	await app.settle(60);
+	expect(app.screen()).not.toContain('boom');
+	expect(sixels(app.output().slice(mark)).some(image => image.row === 1 && image.col === 37)).toBe(true);
+
+	// The which-key menu at the bottom right hides the image under it, not the others.
+	mark = app.output().length;
+	await app.press('g');
+	await app.settle(40);
+	expect(app.screen()).toContain('Go x');
+	written = app.output().slice(mark);
+	expect(erased(written, 10, 31, 18)).toBe(true);
+	expect(erased(written, 1, 37, 10)).toBe(false);
+	expect(erased(written, 4, 1, 10)).toBe(false);
+	const menu = frames(written, 'Go x').find(frame => frame.marker >= 0)!;
+	expect(sixels(menu.body).map(({row, col}) => [row, col])).toEqual([[1, 37], [4, 1]]);
+	mark = app.output().length;
+	await app.press('<Esc>');
+	await app.settle(60);
+	expect(app.screen()).not.toContain('Go x');
+	expect(sixels(app.output().slice(mark)).some(image => image.row === 10 && image.col === 31)).toBe(true);
+	await app.exit();
+});
+
+test('sixel: an image is cut to the inside of its overflow="hidden" ancestors, like Ink cuts text', async () => {
+	// 120x30 px: with height 5 the width follows to 30 cells, wider than an 18-column pane.
+	const wide = bitmap(120, 30, x => (x < 72 ? [255, 0, 0, 255] : [0, 0, 255, 255]));
+	const split = await headless(
+		<Split panes={[() => <Image src={wide} height={5} />, () => <Text>RIGHT PANE TEXT</Text>]} />,
+		{cols: 40, rows: 12, caps: SIXEL_CAPS},
+	);
+	await split.settle(80);
+	// Inside the left pane's border: columns 2-19, 18 cells or 72 px, 5 rows or 30 px.
+	expect(sixels(split.output()).map(({row, col, width, height}) => [row, col, width, height])).toEqual([[2, 2, 72, 30]]);
+	expect(split.lines()[1]).toContain('│RIGHT PANE TEXT');
+	await split.exit();
+
+	// A 3-row bordered box shows one row of a 6-row image, and nothing reaches the line below it.
+	const short = await headless(
+		<Box flexDirection="column">
+			<Box borderStyle="single" width={22} height={3} overflow="hidden">
+				<Image src={RED} width={20} height={6} fit="fill" />
+			</Box>
+			<Text>BELOW THE BOX</Text>
+		</Box>,
+		{cols: 30, rows: 10, caps: SIXEL_CAPS},
+	);
+	await short.settle(80);
+	expect(sixels(short.output()).map(({row, col, width, height}) => [row, col, width, height])).toEqual([[2, 2, 80, 6]]);
+	await short.exit();
+});
+
+test('sixel: a clip that starts inside the image shows the matching part of the bitmap, re-encoded when it moves', async () => {
+	// 5x6 cells of 4x6 px, one color per cell row; the Image's raster is the bitmap pixel for pixel.
+	const band = (row: number): [number, number, number] => [40 * row, 200, 250 - 40 * row];
+	const stripes = bitmap(20, 36, (_x, y) => [...band(Math.floor(y / 6)), 255]);
+	function Scrolled() {
+		const [scroll, setScroll] = useState(2);
+		useKeys([{keys: 'k', desc: 'Up', run: () => setScroll(value => value - 1)}]);
+		return (
+			<Box flexDirection="column">
+				<Text>scrolled {scroll}</Text>
+				<Box height={4} overflow="hidden" flexDirection="column" contentOffsetY={scroll}>
+					<Box flexShrink={0}>
+						<Image src={stripes} width={5} height={6} fit="fill" smooth={false} />
+					</Box>
+				</Box>
+				<Text>bottom</Text>
+			</Box>
+		);
+	}
+	const firstPixel = (bytes: string, from: number) => {
+		const start = bytes.indexOf(DCS, from);
+		const image = decodeSixel(bytes.slice(start, bytes.indexOf(`${ESC}\\`, start) + 2));
+		return {width: image.width, height: image.height, rgb: [...image.data.slice(0, 3)]};
+	};
+	const close = (actual: number[], expected: number[]) => actual.every((value, index) => Math.abs(value - expected[index]!) <= 3);
+
+	const app = await headless(<Scrolled />, {cols: 20, rows: 10, caps: SIXEL_CAPS});
+	await app.settle(80);
+	// Rows 2-5 of the screen show bitmap rows 2-5: placed at row 2, 4 rows (24 px), starting with band 2.
+	let images = sixels(app.output());
+	expect(images.map(({row, col, width, height}) => [row, col, width, height])).toEqual([[2, 1, 20, 24]]);
+	let pixel = firstPixel(app.output(), images[0]!.at);
+	expect(close(pixel.rgb, band(2))).toBe(true);
+
+	// Scrolled up by one: same size on screen, now from band 1.
+	const mark = app.output().length;
+	await app.press('k');
+	await app.settle(60);
+	const written = app.output().slice(mark);
+	images = sixels(written);
+	expect(images.length).toBeGreaterThanOrEqual(1);
+	expect(images.map(({row, col, width, height}) => [row, col, width, height])).toContainEqual([2, 1, 20, 24]);
+	pixel = firstPixel(written, images.at(-1)!.at);
+	expect(close(pixel.rgb, band(1))).toBe(true);
+	await app.exit();
 });
