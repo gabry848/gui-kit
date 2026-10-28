@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {List, Modal, Shell, Split, Tabs, Text, Tree, useEffect, useState, type TreeNode} from '../src/kit/index.js';
+import {createContext, Form, List, Modal, Shell, Split, Tabs, Text, Tree, useContext, useEffect, useKeys, useState, type TreeNode} from '../src/kit/index.js';
 import {headless} from '../src/kit/testing.js';
 
 const mounts: string[] = [];
@@ -241,5 +241,168 @@ test('help lists the new groups', async () => {
 	expect(app.screen()).toContain('Tabs');
 	expect(app.screen()).toContain('Expand all loaded');
 	expect(app.screen()).toContain('Next tab, or tab N after a count');
+	await app.exit();
+});
+
+test('tabs: a count larger than the number of tabs wraps around, as in Vim', async () => {
+	const app = await headless(<Shell title="t"><Tabs tabs={TABS} /></Shell>, {cols: 60, rows: 8});
+	await app.press('4gT');
+	expect(app.screen()).toContain('content C');
+	await app.press('1gt5gT');
+	expect(app.screen()).toContain('content B');
+	await app.press('7gT');
+	expect(app.screen()).toContain('content A');
+	await app.exit();
+});
+
+test('split: focus and onFocusChange control the focused pane', async () => {
+	const changes: number[] = [];
+	function Controlled({follow}: {follow: boolean}) {
+		const [focus, setFocus] = useState(1);
+		useKeys([{keys: 'x', desc: 'Back to the first pane', run: () => setFocus(0)}]);
+		const pane = (name: string) => (active: boolean) => <List items={['one', 'two']} text={item => item} render={item => <Text>{`${name}-${item}`}</Text>} active={active} />;
+		return (
+			<Shell title="s">
+				<Split panes={[pane('L'), pane('R')]} focus={focus} onFocusChange={index => {
+					changes.push(index);
+					if (follow) setFocus(index);
+				}} />
+			</Shell>
+		);
+	}
+	const app = await headless(<Controlled follow />, {cols: 60, rows: 8});
+	// The second pane starts focused, so j moves its list.
+	await app.press('j');
+	expect(app.screen()).toContain('▌R-two');
+	expect(app.screen()).toContain('▌L-one');
+	await app.press('<C-w>hj');
+	expect(app.screen()).toContain('▌L-two');
+	await app.mouse('down', 40, 3);
+	// A click in the pane that already has the focus is not a change.
+	await app.mouse('down', 40, 3);
+	expect(changes).toEqual([0, 1]);
+	await app.press('xk');
+	expect(app.screen()).toContain('▌L-one');
+	await app.exit();
+
+	// A parent that does not follow keeps the focus where it says.
+	changes.length = 0;
+	const fixed = await headless(<Controlled follow={false} />, {cols: 60, rows: 8});
+	await fixed.press('<C-w>hj');
+	expect(changes).toEqual([0]);
+	expect(fixed.screen()).toContain('▌R-two');
+	expect(fixed.screen()).toContain('▌L-one');
+	await fixed.exit();
+});
+
+const Where = createContext('outside');
+
+function DetailsPane({active}: {active: boolean}) {
+	const [open, setOpen] = useState<string | undefined>();
+	const where = useContext(Where);
+	const [ticked, setTicked] = useState<boolean | undefined>();
+	return (
+		<>
+			<List items={['alpha', 'beta']} text={item => item} render={item => <Text>{item}</Text>} active={active && !open} onOpen={setOpen} />
+			{open ? (
+				<Modal title="Details" onClose={() => setOpen(undefined)}>
+					<Text>{`Opened ${open} in ${where}`}</Text>
+					<Form fields={[{name: 'keep', label: 'Keep', type: 'checkbox'}]} onSubmit={values => setTicked(Boolean(values['keep']))} />
+				</Modal>
+			) : null}
+			{ticked === undefined ? null : <Text>{`submitted ${ticked}`}</Text>}
+		</>
+	);
+}
+
+test('a Modal opened in a Split pane is drawn whole over the screen and keeps its contexts', async () => {
+	const app = await headless(
+		<Shell title="m">
+			<Where.Provider value="the right pane">
+				<Split panes={[active => <List items={['x', 'y']} text={item => item} render={item => <Text>{item}</Text>} active={active} />, active => <DetailsPane active={active} />]} />
+			</Where.Provider>
+		</Shell>,
+		{cols: 80, rows: 18},
+	);
+	await app.press('<C-w>l<CR>');
+	const lines = app.lines();
+	const title = lines.findIndex(line => line.includes('Details'));
+	const text = lines.find(line => line.includes('Opened'))!;
+	expect(text).toContain('Opened alpha in the right pane');
+	// Centered on the 80 columns of the screen, not in the right pane, and not cut by it.
+	const left = text.indexOf('│');
+	const right = text.lastIndexOf('│');
+	expect(left + right).toBeGreaterThanOrEqual(78);
+	expect(left + right).toBeLessThanOrEqual(80);
+	expect(left).toBeLessThan(40);
+	expect(lines[title - 2]).toContain('╭');
+	// It takes the keys: x ticks the box of the Form in it, the list below stays.
+	await app.press('x');
+	expect(app.screen()).toContain('[x]');
+	expect(app.screen()).toContain('▌alpha');
+	// Clicks reach the Form inside, wherever the Modal is drawn: select Submit, then press it.
+	const submit = app.lines().findIndex(line => line.includes(' Submit '));
+	await app.mouse('down', app.lines()[submit]!.indexOf('Submit'), submit);
+	await app.mouse('down', app.lines()[submit]!.indexOf('Submit'), submit);
+	expect(app.screen()).toContain('submitted true');
+	await app.press('<Esc>');
+	expect(app.screen()).not.toContain('Details');
+	await app.press('j');
+	expect(app.screen()).toContain('▌beta');
+	await app.exit();
+});
+
+test('tree: onCursor reports the highlighted node by path, not by object', async () => {
+	const seen: (string | undefined)[] = [];
+	let renders = 0;
+	function Reporting() {
+		const [shown, setShown] = useState(true);
+		const [, setLast] = useState<TreeNode | undefined>();
+		renders++;
+		// Built again on every render: the same ids are still the same nodes.
+		const nodes: TreeNode[] = [{id: 'a', label: 'a', children: [{id: 'b', label: 'b'}]}, {id: 'c', label: 'c'}];
+		useKeys([{keys: 'u', desc: 'Unmount', run: () => setShown(false)}]);
+		return (
+			<Shell title="t">
+				{shown ? <Tree nodes={nodes} onCursor={node => {
+					seen.push(node?.label);
+					setLast(node);
+				}} /> : <Text>gone</Text>}
+			</Shell>
+		);
+	}
+	const app = await headless(<Reporting />, {cols: 40, rows: 8});
+	expect(seen).toEqual(['a']);
+	await app.press('lj');
+	expect(seen).toEqual(['a', 'b']);
+	// Closing the parent moves the cursor up to it.
+	await app.press('hh');
+	expect(seen).toEqual(['a', 'b', 'a']);
+	await app.press('/c<CR>');
+	expect(seen).toEqual(['a', 'b', 'a', 'c']);
+	await app.press('/zzz<CR>');
+	expect(seen).toEqual(['a', 'b', 'a', 'c', undefined]);
+	await app.press('/<CR>');
+	expect(seen.at(-1)).toBe('c');
+	const before = renders;
+	await app.settle(100);
+	expect(renders).toBe(before);
+	await app.press('u');
+	expect(seen.at(-1)).toBeUndefined();
+	await app.exit();
+});
+
+test('tree: two clicks in one read open a lazy branch and close it again, loading once', async () => {
+	let calls = 0;
+	const nodes: TreeNode[] = [{id: 'remote', label: 'remote', load: () => {
+		calls++;
+		return lazy();
+	}}];
+	const app = await headless(<TreeApp nodes={nodes} />, {cols: 40, rows: 6});
+	const click = '\u001B[<0;3;1M\u001B[<0;3;1m';
+	await app.type(click + click);
+	await app.settle(150);
+	expect(calls).toBe(1);
+	expect(app.lines()[0]).toBe('▌▸ remote');
 	await app.exit();
 });

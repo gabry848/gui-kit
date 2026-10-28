@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test';
-import {Box, Canvas, Confirm, Form, List, Modal, rgb, Select, Shell, Table, Text, useEffect, useFinish, useKeys, useState} from '../src/kit/index.js';
+import {Box, Canvas, Confirm, Form, List, Modal, Pager, rgb, Select, Shell, Split, Table, Text, useEffect, useFinish, useKeys, useState, type FormValues} from '../src/kit/index.js';
 import {headless} from '../src/kit/testing.js';
 
 function FormApp() {
@@ -309,4 +309,159 @@ test('table rows may be declared with an interface; named keys reach bindings', 
 	expect(log).toEqual(['stab', 'home']);
 	await expect(app.press('<Enter>')).rejects.toThrow('cannot send');
 	await app.exit();
+});
+
+test('form: a click in the next Split pane or outside its Modal does not reach it', async () => {
+	const submits: FormValues[] = [];
+	const fields = [{name: 'ok', label: 'OK', type: 'checkbox' as const}];
+	const app = await headless(
+		<Shell title="f">
+			<Split panes={[
+				active => <Form fields={fields} onSubmit={values => submits.push(values)} active={active} />,
+				active => <List items={['one', 'two', 'three', 'four']} text={item => item} render={item => <Text>{item}</Text>} active={active} />,
+			]} />
+		</Shell>,
+		{cols: 80, rows: 10},
+	);
+	// Row 1 is the checkbox, row 3 the Submit row, in both panes. A click in
+	// the right pane focuses it; the form, still active then, must ignore it.
+	await app.mouse('down', 60, 1);
+	expect(app.lines()[1]).toContain('[ ]');
+	await app.press('<C-w>hj');
+	await app.mouse('down', 60, 3);
+	expect(submits).toEqual([]);
+	// Inside its own pane a click still works: select the box, then tick it.
+	await app.press('<C-w>h');
+	await app.mouse('down', 4, 1);
+	await app.mouse('down', 4, 1);
+	expect(app.lines()[1]).toContain('[x]');
+	await app.exit();
+
+	function InModal() {
+		return (
+			<Shell title="m">
+				<Text>below</Text>
+				<Modal title="Options" onClose={() => {}}>
+					<Form fields={[{name: 'force', label: 'Force', type: 'checkbox'}]} onSubmit={values => submits.push(values)} />
+				</Modal>
+			</Shell>
+		);
+	}
+	const modal = await headless(<InModal />, {cols: 80, rows: 14});
+	const submit = modal.lines().findIndex(line => line.includes(' Submit '));
+	await modal.press('j');
+	await modal.mouse('down', 1, submit);
+	expect(submits).toEqual([]);
+	await modal.mouse('down', modal.lines()[submit]!.indexOf('Submit'), submit);
+	expect(submits).toEqual([{force: false}]);
+	await modal.exit();
+});
+
+test('list: onCursor reports the highlighted item as it moves, filters and changes', async () => {
+	const seen: (string | undefined)[] = [];
+	function Cursor() {
+		const [items, setItems] = useState(['alpha', 'beta', 'gamma']);
+		const [shown, setShown] = useState(true);
+		useKeys([
+			{keys: 'R', desc: 'Replace', run: () => setItems(['zeta', 'beta'])},
+			{keys: 'U', desc: 'Unmount', run: () => setShown(false)},
+		]);
+		return <Shell title="c">{shown ? <List items={items} text={item => item} render={item => <Text>{item}</Text>} onCursor={item => seen.push(item)} /> : <Text>gone</Text>}</Shell>;
+	}
+	const app = await headless(<Cursor />, {cols: 40, rows: 8});
+	expect(seen).toEqual(['alpha']);
+	await app.press('j');
+	await app.press('j');
+	expect(seen).toEqual(['alpha', 'beta', 'gamma']);
+	// At the end already: no change, no call.
+	await app.press('j');
+	expect(seen).toHaveLength(3);
+	await app.press('/be<CR>');
+	expect(seen.at(-1)).toBe('beta');
+	await app.press('/zzz<CR>');
+	expect(seen.at(-1)).toBeUndefined();
+	await app.press('/<CR>');
+	expect(seen.at(-1)).toBe('alpha');
+	await app.press('R');
+	expect(seen.at(-1)).toBe('zeta');
+	await app.press('U');
+	expect(seen.at(-1)).toBeUndefined();
+	await app.exit();
+});
+
+test('list: onCursor with items rebuilt on every render does not loop', async () => {
+	let calls = 0;
+	let renders = 0;
+	function Rebuilt() {
+		const [, setPicked] = useState<{name: string} | undefined>();
+		renders++;
+		const items = ['a', 'b'].map(name => ({name}));
+		return <Shell title="r"><List items={items} text={item => item.name} render={item => <Text>{item.name}</Text>} onCursor={item => {
+			calls++;
+			setPicked(item);
+		}} /></Shell>;
+	}
+	const app = await headless(<Rebuilt />, {cols: 40, rows: 6});
+	await app.settle(100);
+	const before = renders;
+	await app.settle(100);
+	expect(renders).toBe(before);
+	expect(calls).toBe(1);
+	await app.press('j');
+	expect(calls).toBe(2);
+	await app.exit();
+});
+
+test('select and table pass onCursor on: the value, and the row under the cursor after a sort', async () => {
+	const values: (number | undefined)[] = [];
+	const select = await headless(
+		<Shell title="s"><Select options={[{label: 'one', value: 1}, {label: 'two', value: 2}]} onSelect={() => {}} onCursor={value => values.push(value)} /></Shell>,
+		{cols: 40, rows: 6},
+	);
+	await select.press('j');
+	expect(values).toEqual([1, 2]);
+	await select.exit();
+
+	const rows: (string | undefined)[] = [];
+	type Fruit = {name: string; price: number};
+	const fruits: Fruit[] = [{name: 'pear', price: 3}, {name: 'apple', price: 1}, {name: 'fig', price: 2}];
+	const table = await headless(
+		<Shell title="t"><Table<Fruit> columns={[{key: 'name', title: 'Name'}, {key: 'price', title: 'Price', align: 'right'}]} rows={fruits} onCursor={row => rows.push(row?.name)} /></Shell>,
+		{cols: 40, rows: 8},
+	);
+	expect(rows).toEqual(['pear']);
+	await table.press('s');
+	expect(rows).toEqual(['pear', 'apple']);
+	await table.press('S');
+	expect(rows).toEqual(['pear', 'apple', 'pear']);
+	await table.press('j');
+	expect(rows).toEqual(['pear', 'apple', 'pear', 'fig']);
+	await table.exit();
+});
+
+test('table: in a narrow pane the last column is cut and the others keep their width', async () => {
+	type Port = {command: string; pid: number; address: string};
+	const ports: Port[] = [{command: 'node', pid: 4242, address: '127.0.0.1:3000 and a long tail'}, {command: 'postgres', pid: 301, address: '[::1]:5432'}];
+	const app = await headless(
+		<Shell title="n"><Box width={30}><Table<Port> columns={[{key: 'command', title: 'Command'}, {key: 'pid', title: 'PID', align: 'right'}, {key: 'address', title: 'Address'}]} rows={ports} /></Box></Shell>,
+		{cols: 40, rows: 6},
+	);
+	// PID keeps its 4 digits under its title; the address is cut at the edge.
+	expect(app.lines().slice(0, 3)).toEqual([' Command       PID Address', '▌node         4242 127.0.0.1:3', ' postgres      301 [::1]:5432']);
+	await app.exit();
+});
+
+test('mouse: wheel reports that arrive in one read each scroll from the previous one', async () => {
+	const wheel = (x: number, y: number) => `\u001B[<65;${x + 1};${y + 1}M`;
+	const items = Array.from({length: 40}, (_, index) => `item ${index}`);
+	const list = await headless(<Shell title="w"><List items={items} text={item => item} render={item => <Text>{item}</Text>} /></Shell>, {cols: 40, rows: 12});
+	await list.type(wheel(3, 2).repeat(5));
+	expect(list.screen()).toContain('▌item 15');
+	await list.exit();
+
+	const text = Array.from({length: 100}, (_, index) => `line ${index + 1}`);
+	const pager = await headless(<Shell title="p"><Pager text={text} /></Shell>, {cols: 40, rows: 12});
+	await pager.type(wheel(3, 2).repeat(5));
+	expect(pager.lines()[0]).toBe('line 16');
+	await pager.exit();
 });

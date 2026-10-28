@@ -84,12 +84,16 @@ export function Form({fields, onSubmit, submitLabel = 'Submit', active = true}: 
 
 	useMouse(event => {
 		if (event.kind !== 'down' || event.button !== 'left') return;
-		rows.current.forEach((node, index) => {
-			if (node && absolutePosition(node).y === event.y) {
-				setRow(index);
-				if (index === row) activate();
-			}
+		// The row and the columns of the form: a click in the next pane of a
+		// Split, or outside the Modal it sits in, is not for it.
+		const index = rows.current.findIndex(node => {
+			if (!node) return false;
+			const {x, y} = absolutePosition(node);
+			return event.y === y && event.x >= x && event.x < x + (node.yogaNode?.getComputedWidth() ?? 0);
 		});
+		if (index === -1) return;
+		setRow(index);
+		if (index === row) activate();
 	}, active);
 
 	const labelWidth = Math.max(...fields.map(item => item.label.length)) + 2;

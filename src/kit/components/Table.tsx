@@ -19,16 +19,19 @@ type Props<T> = {
 	columns: Column<T>[];
 	rows: T[];
 	onOpen?: (row: T) => void;
+	/** The highlighted row each time it changes, sorting included, as List's onCursor; undefined when none is. */
+	onCursor?: (row: T | undefined) => void;
 	active?: boolean;
 };
 
-function fit(text: string, width: number, align: 'left' | 'right'): string {
+/** The text cut to `width`; padded to it, unless it is the last column and left-aligned. */
+function fit(text: string, width: number, align: 'left' | 'right', last = false): string {
 	const cut = [...text].length > width ? [...text].slice(0, Math.max(0, width - 1)).join('') + '…' : text;
-	return align === 'right' ? cut.padStart(width) : cut.padEnd(width);
+	return align === 'right' ? cut.padStart(width) : last ? cut : cut.padEnd(width);
 }
 
 /** Rows and columns with a header; `s` sorts by the next column, `S` flips the order. */
-export function Table<T extends object>({columns, rows, onOpen, active = true}: Props<T>) {
+export function Table<T extends object>({columns, rows, onOpen, onCursor, active = true}: Props<T>) {
 	const [sort, setSort] = useState<{column: number; descending: boolean} | undefined>();
 	const cell = (row: T, column: Column<T>) => {
 		const format = column.format as ((value: unknown, row: T) => string) | undefined;
@@ -54,14 +57,19 @@ export function Table<T extends object>({columns, rows, onOpen, active = true}: 
 		{active},
 	);
 
+	// In a narrow pane only the last column gives up room, cut with an
+	// ellipsis; the others keep their width, so values and the header stay aligned.
+	const lastColumn = columns.length - 1;
 	return (
 		<Box flexDirection="column" flexGrow={1}>
-			<Box height={1}>
-				<Text> </Text>
+			<Box height={1} flexShrink={0}>
+				<Box flexShrink={0}><Text> </Text></Box>
 				{columns.map((column, index) => (
-					<Text key={column.key} color={theme.muted} bold>
-						{fit(column.title + (sort?.column === index ? (sort.descending ? ' ↓' : ' ↑') : ''), widths[index]!, column.align ?? 'left') + ' '}
-					</Text>
+					<Box key={column.key} flexShrink={index === lastColumn ? 1 : 0}>
+						<Text color={theme.muted} bold wrap="truncate-end">
+							{fit(column.title + (sort?.column === index ? (sort.descending ? ' ↓' : ' ↑') : ''), widths[index]!, column.align ?? 'left', index === lastColumn) + (index === lastColumn ? '' : ' ')}
+						</Text>
+					</Box>
 				))}
 			</Box>
 			<List
@@ -69,12 +77,15 @@ export function Table<T extends object>({columns, rows, onOpen, active = true}: 
 				text={row => columns.map(column => cell(row, column)).join(' ')}
 				active={active}
 				{...(onOpen ? {onOpen} : {})}
+				{...(onCursor ? {onCursor} : {})}
 				render={(row, selected) => (
 					<Box>
 						{columns.map((column, index) => (
-							<Text key={column.key} color={theme.text} bold={selected && index === 0}>
-								{fit(cell(row, column), widths[index]!, column.align ?? 'left') + ' '}
-							</Text>
+							<Box key={column.key} flexShrink={index === lastColumn ? 1 : 0}>
+								<Text color={theme.text} bold={selected && index === 0} wrap="truncate-end">
+									{fit(cell(row, column), widths[index]!, column.align ?? 'left', index === lastColumn) + (index === lastColumn ? '' : ' ')}
+								</Text>
+							</Box>
 						))}
 					</Box>
 				)}

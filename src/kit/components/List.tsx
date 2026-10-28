@@ -10,13 +10,21 @@ type Props<T> = {
 	/** Text the `/` search matches against. */
 	text: (item: T) => string;
 	onOpen?: (item: T) => void;
+	/**
+	 * The highlighted item, each time it changes: the cursor moves, or a
+	 * filter, a sort or new `items` put another item under it. First called
+	 * on mount. undefined when nothing is highlighted: an empty list, a filter
+	 * that matches nothing, or the list unmounting. An item counts as the
+	 * same while its row and its `text` stay the same.
+	 */
+	onCursor?: (item: T | undefined) => void;
 	active?: boolean;
 	/** Rows to show. By default the list fills the space its parent gives it. */
 	height?: number;
 };
 
 /** A scrolling list driven by Vim keys, the mouse wheel and clicks. */
-export function List<T>({items, render, text, onOpen, active = true, height: fixedHeight}: Props<T>) {
+export function List<T>({items, render, text, onOpen, onCursor, active = true, height: fixedHeight}: Props<T>) {
 	const ref = useRef<DOMElement>(null);
 	const {height: measured} = useBoxMetrics(ref);
 	const {keymap} = useKit();
@@ -38,6 +46,24 @@ export function List<T>({items, render, text, onOpen, active = true, height: fix
 	};
 
 	useEffect(() => moveTo(cursor), [rows, visible.length]);
+
+	// The row the cursor lands on once moveTo has clamped it. Compared by row
+	// and text, not identity: items rebuilt on every render would otherwise
+	// report on every render, and a parent that stores them would loop.
+	const highlighted = Math.min(cursor, last);
+	const item = visible[highlighted];
+	const signature = item === undefined ? undefined : `${highlighted}\u0000${text(item)}`;
+	const reported = useRef<string | undefined>(undefined);
+	const latestCursor = useRef(onCursor);
+	latestCursor.current = onCursor;
+	useEffect(() => {
+		if (signature === reported.current) return;
+		reported.current = signature;
+		latestCursor.current?.(item);
+	});
+	useEffect(() => () => {
+		if (reported.current !== undefined) latestCursor.current?.(undefined);
+	}, []);
 
 	useEffect(() => {
 		if (!active) {

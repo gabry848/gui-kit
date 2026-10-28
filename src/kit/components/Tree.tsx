@@ -17,6 +17,12 @@ type Props = {
 	nodes: TreeNode[];
 	/** Enter or a second click on a leaf. */
 	onOpen?: (node: TreeNode) => void;
+	/**
+	 * The highlighted node each time it changes, as List's onCursor: first on
+	 * mount, undefined when nothing is highlighted or the tree unmounts. A
+	 * node counts as the same while its path of ids stays the same.
+	 */
+	onCursor?: (node: TreeNode | undefined) => void;
 	active?: boolean;
 	/** Rows to show. By default the tree fills the space its parent gives it. */
 	height?: number;
@@ -59,7 +65,7 @@ function flatten(nodes: TreeNode[], shape: Shape, depth = 0, parent?: string, ou
  * into it, h closes it or goes to the parent, Enter opens a leaf, zR and zM
  * open and close everything, `/` filters. Children can load lazily.
  */
-export function Tree({nodes, onOpen, active = true, height: fixedHeight}: Props) {
+export function Tree({nodes, onOpen, onCursor, active = true, height: fixedHeight}: Props) {
 	const ref = useRef<DOMElement>(null);
 	const {height: measured} = useBoxMetrics(ref);
 	const {keymap} = useKit();
@@ -69,6 +75,8 @@ export function Tree({nodes, onOpen, active = true, height: fixedHeight}: Props)
 	const [query, setQuery] = useState('');
 	const [cursor, setCursor] = useState<string | undefined>();
 	const offset = useRef(0);
+	// Loads in flight, read at once: `loading` is state, so two expands before a render would both see it empty.
+	const inflight = useRef(new Set<string>());
 	const mounted = useRef(true);
 	useEffect(() => () => {
 		mounted.current = false;
@@ -92,11 +100,25 @@ export function Tree({nodes, onOpen, active = true, height: fixedHeight}: Props)
 
 	const moveTo = (target: number) => setCursor(rows[Math.min(last, Math.max(0, target))]?.key);
 
+	// By path, not identity: nodes built anew on each render are still the same node.
+	const reported = useRef<string | undefined>(undefined);
+	const latestCursor = useRef(onCursor);
+	latestCursor.current = onCursor;
+	useEffect(() => {
+		if (row?.key === reported.current) return;
+		reported.current = row?.key;
+		latestCursor.current?.(row?.node);
+	});
+	useEffect(() => () => {
+		if (reported.current !== undefined) latestCursor.current?.(undefined);
+	}, []);
+
 	const expand = (target: Row) => {
 		if (!target.branch) return;
 		setExpanded(current => new Set(current).add(target.key));
 		const {node, key} = target;
-		if (node.children !== undefined || !node.load || loaded.has(key) || loading.has(key)) return;
+		if (node.children !== undefined || !node.load || loaded.has(key) || inflight.current.has(key)) return;
+		inflight.current.add(key);
 		setLoading(current => new Set(current).add(key));
 		node.load().then(
 			children => {
@@ -112,6 +134,7 @@ export function Tree({nodes, onOpen, active = true, height: fixedHeight}: Props)
 				});
 			},
 		).finally(() => {
+			inflight.current.delete(key);
 			if (!mounted.current) return;
 			setLoading(current => {
 				const next = new Set(current);

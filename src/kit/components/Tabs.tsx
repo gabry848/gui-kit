@@ -26,7 +26,9 @@ export function Tabs({tabs, selected, onChange, active = true}: Props) {
 	const titles = useRef<(DOMElement | null)[]>([]);
 
 	const open = (index: number) => {
-		const tab = tabs[(index + tabs.length) % tabs.length];
+		// Wraps any distance, as in Vim: 4gT from the first of three tabs opens the third.
+		const count = tabs.length;
+		const tab = count > 0 ? tabs[((index % count) + count) % count] : undefined;
 		if (!tab) return;
 		setOwn(tab.id);
 		onChange?.(tab.id);

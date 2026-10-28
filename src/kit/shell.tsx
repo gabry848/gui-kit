@@ -1,17 +1,37 @@
-import {useContext, useState, type ReactNode} from 'react';
-import {Box, Text, useApp, useWindowSize} from 'ink';
+import {createContext, useContext, useEffect, useRef, useState, type ReactNode} from 'react';
+import {Box, Text, useApp, useWindowSize, type DOMElement} from 'ink';
 import {KeyScope, useCommand, useKeymapState, useKeys, useKit, useMouseBarrier} from './context.js';
+import {useGraphicsSuspend} from './graphics.js';
 import {prettyKeys, type Binding} from './keymap.js';
+import {absolutePosition} from './layout.js';
 import {useToasts} from './notify.js';
 import {theme} from './theme.js';
 
 const MODE_LABEL = {normal: 'NORMAL', insert: 'INSERT', command: 'COMMAND'} as const;
+
+/**
+ * The Shell's layer for Modals: a box over the whole screen. A Modal draws
+ * into it through a portal, so a Modal opened in a Split pane or a tab is
+ * neither moved nor cut by that pane, and it stays where it is in the React
+ * tree, with its state and the contexts around it. null until the Shell has
+ * mounted; undefined outside a Shell, where a Modal draws in place.
+ */
+const ModalLayer = createContext<DOMElement | null | undefined>(undefined);
+
+// React's portal element, as react-dom's createPortal builds it. Ink's
+// reconciler supports portals (appendChildToContainer and the rest work on any
+// node) but does not export createPortal.
+const PORTAL = Symbol.for('react.portal');
+function portal(children: ReactNode, container: DOMElement): ReactNode {
+	return {$$typeof: PORTAL, key: null, children, containerInfo: container, implementation: null} as unknown as ReactNode;
+}
 
 /** Full-screen frame of every app: content, status line, popups. */
 export function Shell({title, hint, children}: {title: string; hint?: string; children: ReactNode}) {
 	const {columns, rows} = useWindowSize();
 	const {keymap, overlay, setOverlay} = useKit();
 	const {exit} = useApp();
+	const [layer, setLayer] = useState<DOMElement | null>(null);
 
 	useKeys(
 		[
@@ -24,15 +44,19 @@ export function Shell({title, hint, children}: {title: string; hint?: string; ch
 	useCommand('help', 'Help: all keys', () => setOverlay('help'));
 
 	return (
-		<Box flexDirection="column" width={columns} height={rows}>
-			<Box flexGrow={1} flexDirection="column" overflow="hidden">
-				{children}
+		<ModalLayer.Provider value={layer}>
+			<Box flexDirection="column" width={columns} height={rows}>
+				<Box flexGrow={1} flexDirection="column" overflow="hidden">
+					{children}
+				</Box>
+				<StatusLine title={title} hint={hint} />
+				<WhichKey />
+				{/* Modals draw here, over the content and under the help and the toasts. */}
+				<Box ref={setLayer} position="absolute" top={0} left={0} width={columns} height={rows} />
+				{overlay === 'help' ? <Help onClose={() => setOverlay(undefined)} /> : null}
+				<Toasts />
 			</Box>
-			<StatusLine title={title} hint={hint} />
-			<WhichKey />
-			{overlay === 'help' ? <Help onClose={() => setOverlay(undefined)} /> : null}
-			<Toasts />
-		</Box>
+		</ModalLayer.Provider>
 	);
 }
 
@@ -43,18 +67,51 @@ const TOAST = {
 	error: {icon: '✗', color: theme.danger},
 } as const;
 
-/** Notifications from useNotify, stacked at the top right; Esc dismisses them all. */
+// Clicks on a toast go to it before the screen below, but not through an open Modal (20) or the help.
+const TOAST_SCOPE = 15;
+
+/**
+ * Notifications from useNotify, stacked at the top right. Esc dismisses them
+ * all, unless the app binds Esc itself; :dismiss always does, and a click
+ * dismisses the toast under it.
+ */
 function Toasts() {
 	const {toasts, dismiss} = useToasts();
 	const {columns} = useWindowSize();
+	const {addMouse} = useKit();
+	const boxes = useRef(new Map<number, DOMElement>());
 	useKeys([{keys: '<Esc>', desc: 'Dismiss notifications', group: 'App', run: () => dismiss()}], {active: toasts.length > 0, priority: -10});
-	if (toasts.length === 0) {
+	useCommand('dismiss', 'Dismiss notifications', () => dismiss());
+	const shown = toasts.length > 0;
+	useEffect(() => {
+		if (!shown) return;
+		return addMouse(event => {
+			if (event.kind !== 'down') return false;
+			for (const [id, node] of boxes.current) {
+				const {x, y} = absolutePosition(node);
+				const width = node.yogaNode?.getComputedWidth() ?? 0;
+				const height = node.yogaNode?.getComputedHeight() ?? 0;
+				if (event.x >= x && event.x < x + width && event.y >= y && event.y < y + height) {
+					dismiss(id);
+					// The toast covers what is below it, so the click stops here.
+					return true;
+				}
+			}
+			return false;
+		}, TOAST_SCOPE);
+	}, [addMouse, dismiss, shown]);
+	// Sixel images are drawn over Ink's text, so they hide while anything floats above them.
+	useGraphicsSuspend(shown);
+	if (!shown) {
 		return null;
 	}
 	return (
 		<Box position="absolute" top={0} right={1} flexDirection="column" alignItems="flex-end">
 			{toasts.map(toast => (
-				<Box key={toast.id} borderStyle="round" borderColor={TOAST[toast.kind].color} backgroundColor={theme.background} paddingX={1} maxWidth={Math.max(20, Math.floor(columns / 2))}>
+				<Box key={toast.id} ref={node => {
+					if (node) boxes.current.set(toast.id, node);
+					else boxes.current.delete(toast.id);
+				}} borderStyle="round" borderColor={TOAST[toast.kind].color} backgroundColor={theme.background} paddingX={1} maxWidth={Math.max(20, Math.floor(columns / 2))}>
 					<Text color={TOAST[toast.kind].color}>{TOAST[toast.kind].icon} </Text>
 					<Text color={theme.text}>{toast.text}</Text>
 				</Box>
@@ -102,7 +159,9 @@ function StatusLine({title, hint}: {title: string; hint: string | undefined}) {
 /** Shows what can follow the keys typed so far, like which-key in Neovim. */
 function WhichKey() {
 	const state = useKeymapState();
-	if (state.pending.length === 0 || state.next.length === 0) {
+	const shown = state.pending.length > 0 && state.next.length > 0;
+	useGraphicsSuspend(shown);
+	if (!shown) {
 		return null;
 	}
 	const typed = state.pending.length;
@@ -172,6 +231,7 @@ function Help({onClose}: {onClose: () => void}) {
 /** A bordered box centered over the screen. */
 export function Overlay({title, children, width}: {title: string; children: ReactNode; width?: number}) {
 	const {columns, rows} = useWindowSize();
+	useGraphicsSuspend();
 	return (
 		<Box position="absolute" width={columns} height={rows} justifyContent="center" alignItems="center">
 			<Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={2} paddingY={1} backgroundColor="#16161e" {...(width ? {width} : {})}>
@@ -183,7 +243,11 @@ export function Overlay({title, children, width}: {title: string; children: Reac
 	);
 }
 
-/** A modal dialog: it takes the keys until it closes. */
+/**
+ * A modal dialog: it takes the keys until it closes. Inside a Shell it is
+ * drawn centered over the whole screen wherever it is rendered, a Split pane
+ * or a tab included.
+ */
 export function Modal({title, onClose, bindings = [], children}: {title: string; onClose: () => void; bindings?: Binding[]; children: ReactNode}) {
 	useKeys(
 		[
@@ -196,9 +260,12 @@ export function Modal({title, onClose, bindings = [], children}: {title: string;
 	// Children's keys go above this modal layer, or a Form inside would get none.
 	const scope = useContext(KeyScope);
 	useMouseBarrier(scope + 20);
-	return (
+	const layer = useContext(ModalLayer);
+	const content = (
 		<KeyScope.Provider value={scope + 20}>
 			<Overlay title={title}>{children}</Overlay>
 		</KeyScope.Provider>
 	);
+	if (layer === undefined) return content;
+	return layer ? portal(content, layer) : null;
 }

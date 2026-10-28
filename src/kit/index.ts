@@ -26,6 +26,7 @@ export {ProcessView, useProcess, type ProcessHandle, type StartOptions} from './
 export {Image, type ImageProps} from './canvas/Image.js';
 export {decodeImage, drawBitmap, fitRect, loadImage, type Bitmap, type DrawOptions, type Fit} from './canvas/bitmap.js';
 export {encodeSixel} from './canvas/sixel.js';
+export {useGraphicsSuspend} from './graphics.js';
 
 export {Box, Newline, Spacer, Text, useWindowSize} from 'ink';
 export {createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState} from 'react';

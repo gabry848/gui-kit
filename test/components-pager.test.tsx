@@ -140,3 +140,58 @@ test('pager: 100k lines stay fast', async () => {
 	for (const time of times) expect(time).toBeLessThan(400);
 	await app.exit();
 });
+
+test('pager: a tab after an escape lands on the visible column, with and without ansi', async () => {
+	// The b goes to column 8 whatever the escapes before it.
+	expect(cleanLine('\u001B[31mred\u001B[0m\tb')).toBe('red     b');
+	expect(cleanLine('red\tb')).toBe('red     b');
+	expect(cleanLine('\u001B[31mred\u001B[0m\tb', true)).toBe('\u001B[31mred\u001B[0m     b');
+	expect(cleanLine('\u001B]0;title\u0007a\tb\tc')).toBe('a       b       c');
+	const app = await headless(<Shell title="t"><Pager text={['\u001B[31mred\u001B[0m\tb', 'red\tb']} ansi /></Shell>, {cols: 40, rows: 6});
+	expect(app.lines().slice(0, 2)).toEqual(['red     b', 'red     b']);
+	await app.exit();
+});
+
+test('pager: with ansi, search matches the visible text, not the color codes', async () => {
+	const app = await headless(<Shell title="s"><Pager text={['\u001B[31mred\u001B[0m', 'plain', '\u001B[1mbold red\u001B[22m']} ansi /></Shell>, {cols: 40, rows: 8});
+	await app.press('/31<CR>');
+	expect(app.screen()).toContain('/31  no match');
+	await app.press('/m<CR>');
+	expect(app.screen()).toContain('/m  no match');
+	await app.press('/red<CR>');
+	expect(app.screen()).toContain('/red  1/2');
+	await app.press('n');
+	expect(app.screen()).toContain('/red  2/2');
+	await app.exit();
+});
+
+test('pager: with offset, the view and the matches stay on their lines while old ones are cut', async () => {
+	// Like useProcess at maxLines: each `a` adds 5 lines at the end and cuts 5 from the front.
+	function Trimmed() {
+		const [first, setFirst] = useState(0);
+		const lines = Array.from({length: 40}, (_, index) => `line ${first + index + 1}`);
+		useKeys([{keys: 'a', desc: 'Add and cut', run: () => setFirst(current => current + 5)}]);
+		return <Shell title="o"><Pager text={lines} offset={first} /></Shell>;
+	}
+	// 6 rows: 4 of text, the position line, the status line.
+	const app = await headless(<Trimmed />, {cols: 50, rows: 6});
+	await app.press('10j');
+	expect(app.lines()[0]).toBe('line 11');
+	expect(app.lines()[4]).toBe('11-14/40');
+	await app.press('a');
+	expect(app.lines()[0]).toBe('line 11');
+	expect(app.lines()[4]).toBe('11-14/45');
+	await app.press('/line 13<CR>');
+	expect(app.lines()[4]).toContain('/line 13  1/1');
+	await app.press('a');
+	expect(app.lines()[0]).toBe('line 11');
+	expect(app.lines()[4]).toContain('11-14/50  /line 13  1/1');
+	await app.press('n');
+	expect(app.lines()[0]).toBe('line 11');
+	expect(app.lines()[4]).toContain('/line 13  1/1');
+	// Once its lines are cut, the view stays on the oldest one left.
+	await app.press('aa');
+	expect(app.lines()[0]).toBe('line 21');
+	expect(app.lines()[4]).toContain('21-24/60  /line 13  no match');
+	await app.exit();
+});

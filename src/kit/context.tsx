@@ -6,7 +6,8 @@ import {parseMouse, type MouseEvent} from './mouse.js';
 import {NotifyProvider} from './notify.js';
 import type {Caps} from './probe.js';
 
-type MouseHandler = (event: MouseEvent) => void;
+/** Returning true keeps the event from the handlers after this one (lower scopes, or registered earlier). */
+type MouseHandler = (event: MouseEvent) => boolean | void;
 
 type Kit = {
 	keymap: Keymap;
@@ -53,30 +54,17 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 	useEffect(() => keymap.command('q', 'Quit the app', () => exit()), [keymap, exit]);
 	useEffect(() => keymap.command('quit', 'Quit the app', () => exit()), [keymap, exit]);
 
-	useEffect(() => {
-		const onMouse = (report: string) => {
-			const mouse = parseMouse(report, caps.sgrPixels ? caps.cell : undefined);
-			if (mouse) {
-				// A Modal, a Confirm or the help keeps clicks from reaching the screen below.
-				const floor = Math.max(-Infinity, ...[...barriers.current].map(barrier => barrier.level));
-				for (const {handler, scope} of [...mouseHandlers.current].reverse()) {
-					if (scope >= floor) handler(mouse);
-				}
-			}
-		};
-		input.on('mouse', onMouse);
-		return () => {
-			input.off('mouse', onMouse);
-		};
-	}, [input, caps]);
-
 	// Text typed faster than it is read, or sent by an agent, arrives as one
 	// chunk; Ink only splits escape sequences, so Enter and Tab ride along too.
 	// The chunk is fed one key at a time, each after the previous one has been
 	// rendered, so handlers see current state. Outside insert mode every
 	// character is a key; in insert mode a run of text goes in as one piece.
-	const pending = useRef<{text?: string; key?: string}[]>([]);
+	// Mouse reports of one read (a double click, a fast wheel) queue the same
+	// way. After every step the pump waits once more, so input that arrives
+	// in the same tick also waits for the render.
+	const pending = useRef<{text?: string; key?: string; mouse?: MouseEvent}[]>([]);
 	const pump = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+	const idle = () => pending.current.length === 0 && !pump.current;
 
 	// An exception in a key handler ends the app through Ink, so the terminal
 	// is restored and the error reaches waitUntilExit instead of killing Bun.
@@ -89,11 +77,24 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 		}
 	}, [exit]);
 
+	const dispatchMouse = useCallback((mouse: MouseEvent) => {
+		// A Modal, a Confirm or the help keeps clicks from reaching the screen below.
+		const floor = Math.max(-Infinity, ...[...barriers.current].map(barrier => barrier.level));
+		// Higher scopes first; within a scope, the handler registered last.
+		const handlers = [...mouseHandlers.current].reverse().filter(entry => entry.scope >= floor).sort((a, b) => b.scope - a.scope);
+		for (const {handler} of handlers) {
+			if (handler(mouse) === true) break;
+		}
+	}, []);
+
 	const drain = useCallback(() => {
 		pump.current = undefined;
 		const next = pending.current[0];
 		if (!next) return;
-		if (next.key !== undefined) {
+		if (next.mouse) {
+			pending.current.shift();
+			safely(() => dispatchMouse(next.mouse!));
+		} else if (next.key !== undefined) {
 			pending.current.shift();
 			safely(() => keymap.feed(next.key!));
 		} else {
@@ -109,8 +110,25 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 			else if (insert && !/^[\u0000-\u001F\u007F]$/u.test(piece)) safely(() => keymap.insertText(piece));
 			else if (piece >= ' ') safely(() => keymap.feed(piece === ' ' ? '<Space>' : piece));
 		}
-		if (pending.current.length > 0) pump.current = setTimeout(drain, 2);
-	}, [keymap, safely]);
+		pump.current = setTimeout(drain, 2);
+	}, [keymap, safely, dispatchMouse]);
+
+	useEffect(() => {
+		const onMouse = (report: string) => {
+			const mouse = parseMouse(report, caps.sgrPixels ? caps.cell : undefined);
+			if (!mouse) return;
+			if (idle()) {
+				safely(() => dispatchMouse(mouse));
+				pump.current = setTimeout(drain, 2);
+				return;
+			}
+			pending.current.push({mouse});
+		};
+		input.on('mouse', onMouse);
+		return () => {
+			input.off('mouse', onMouse);
+		};
+	}, [input, caps, safely, dispatchMouse, drain]);
 
 	useInput((text, key) => {
 		const token = tokenFromInk(text, key);
@@ -120,8 +138,9 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 		// Typed text comes back unchanged from tokenFromInk; key names do not.
 		const typed = token === text && !key.ctrl && !key.meta;
 		if (!typed || ([...text].length === 1 && text >= ' ')) {
-			if (pending.current.length === 0) {
+			if (idle()) {
 				safely(() => (typed && keymap.state.mode === 'insert' ? keymap.insertText(text) : keymap.feed(token)));
+				pump.current = setTimeout(drain, 2);
 				return;
 			}
 			pending.current.push(typed ? {text} : {key: token});

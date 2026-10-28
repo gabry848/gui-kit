@@ -12,6 +12,10 @@ type Props = {
 	/** Flex ratios, e.g. [1, 2] gives the second pane two thirds; equal by default. */
 	sizes?: number[];
 	active?: boolean;
+	/** The focused pane's index. Without it the Split keeps its own, starting from the first. */
+	focus?: number;
+	/** Called with the new index when the focus moves, by keys or a click. */
+	onFocusChange?: (index: number) => void;
 };
 
 /**
@@ -20,10 +24,14 @@ type Props = {
  * focuses the pane under the mouse. Only one level: a Split inside a pane
  * would compete for the same keys.
  */
-export function Split({panes, direction = 'row', sizes = [], active = true}: Props) {
-	const [focus, setFocus] = useState(0);
+export function Split({panes, direction = 'row', sizes = [], active = true, focus, onFocusChange}: Props) {
+	const [own, setOwn] = useState(0);
 	const boxes = useRef<(DOMElement | null)[]>([]);
-	const focused = Math.min(focus, panes.length - 1);
+	const focused = Math.max(0, Math.min(focus ?? own, panes.length - 1));
+	const setFocus = (index: number) => {
+		setOwn(index);
+		if (index !== focused) onFocusChange?.(index);
+	};
 	const move = (delta: number) => setFocus(Math.min(panes.length - 1, Math.max(0, focused + delta)));
 	const cycle = () => setFocus((focused + 1) % panes.length);
 	// h/l move in a row and k/j in a column; the other pair has nowhere to go.
