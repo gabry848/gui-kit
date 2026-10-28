@@ -45,7 +45,7 @@ Apps import `'gui-kit'` from any folder without installing anything: the CLI poi
 gui <app> [args]                  # start an installed app
 gui run <app|folder|file>         # start it in the current terminal
 gui ask <app|folder|file>         # finish() value as JSON on stdout; exit 1 if cancelled, 3 without a terminal
-gui screen <app|file> --keys 'K'  # render in a virtual terminal, press keys (Vim notation), print the screen
+gui screen <app|file> --keys 'K'  # render in a virtual terminal, press keys (Vim notation, <Wait> pauses), print the screen
 gui check <app|folder|file>       # type check and a first render, no terminal needed
 
 gui scratch [name]                # new one-off file in ~/.local/share/gui/scratch; prints its path
@@ -74,18 +74,18 @@ Everything lives in `${XDG_DATA_HOME:-~/.local/share}/gui` (`GUI_HOME` moves it)
 
 **Kit versions.** `"kit"` is the semver range of gui-kit versions the app works with. `gui install` copies the current kit to `GUI_HOME/kits/<version>` and links that copy into the project's `node_modules` (`gui-kit`, `react`, `@types`), so Bun, `tsc` and your editor all see the same kit, and later changes to the kit cannot break an installed app. Reinstall to move an app to a newer compatible copy; change `"kit"` to move it across an incompatible version.
 
-**Permissions.** `"permissions"` says what the app may do beyond the baseline. The baseline (`{}`, what `gui new` writes) can read the app's own folder, its data folder, the kit and files outside your home; it can write its data folder, temp folders and the terminal; it has no network and runs no commands.
+**Permissions.** `"permissions"` says what the app may do beyond the baseline. The baseline (`{}`, what `gui new` writes) can read the app's own folder, its data folder, the kit and files outside your home, and list the folder it starts in (reading only its `package.json`, `tsconfig.json` and `jsconfig.json`). It can write its data folder, temp folders outside your home and the terminal. It has no network at all and runs no commands except `bun` itself, which stays in the sandbox.
 
 | Key | Value |
 |---|---|
 | `read` | Paths it may also read inside your home. |
 | `write` | Paths it may also write (and read). |
-| `net` | `false`, `"local"` (localhost only) or `true`. |
-| `run` | Command names it may run, such as `git`, or `"*"` for any. Programs it starts stay in the sandbox. |
+| `net` | `false` (no sockets, no DNS), `"local"` (localhost by IP) or `true`. |
+| `run` | Command names it may run, such as `git`, or `"*"` for any. Programs it starts stay in the sandbox. With `git` or `"*"` it may also read `~/.gitconfig` and `~/.config/git`. |
 
-Paths may start with `$CWD` (the folder `gui` was started in), `$APP`, `$DATA`, `$HOME`, `$TMP` or `~`. An app without a `"permissions"` field has full access.
+Paths may start with `$CWD` (the folder `gui` was started in), `$REPO` (the git work tree containing `$CWD`), `$APP`, `$DATA`, `$HOME`, `$TMP` or `~`. An app without a `"permissions"` field has full access. Sandboxed apps never see the variables of a `.env` file.
 
-`gui install` lists what an app asks for and needs your yes; without a terminal it needs `--yes`, which an agent should pass only after you agreed. Reinstalling with the same permissions asks nothing; an app whose `gui.json` later asks for more stops until you approve it again.
+`gui install` lists what an app asks for and needs your yes; without a terminal it needs `--yes`, which an agent should pass only after you agreed. Reinstalling with the same permissions asks nothing; an installed app whose `gui.json` later asks for more, changes its name or leaves its `"kit"` range stops until you install it again, whether you start it by name, by folder or by its entry file.
 
 On macOS the app runs inside `sandbox-exec` with a profile built from these permissions, and `gui screen` and `gui check` use the same sandbox. On other systems the permissions are shown and approved but not enforced. The app's data folder is in `GUI_DATA_DIR`.
 
@@ -124,4 +124,4 @@ bun run demo                  # demo app: a list and a canvas
 bun bench/canvas.ts 200 50    # frame cost per canvas backend
 ```
 
-The CLI of one kit version starts apps through `src/cli/launch.tsx` and `src/cli/screen.tsx` of another, so their arguments and the `GUI_ARGS`, `GUI_APP_DIR`, `GUI_DATA_DIR` and `GUI_TTY` variables must stay compatible. Bump the version in `package.json` for every change apps can notice; in 0.x a minor bump is a breaking change.
+The CLI of one kit version starts apps through `src/cli/launch.tsx` and `src/cli/screen.tsx` of another, so their arguments (screen.tsx takes an optional fifth one, the extra wait in ms) and the `GUI_ARGS`, `GUI_APP_DIR`, `GUI_DATA_DIR` and `GUI_TTY` variables must stay compatible. Bump the version in `package.json` for every change apps can notice; in 0.x a minor bump is a breaking change.
