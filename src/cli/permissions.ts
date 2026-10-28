@@ -166,6 +166,17 @@ function executables(name: string): string[] {
 	return [...paths];
 }
 
+/** The folders from `top` down to the parent of `dir`, when `dir` is inside `top`. */
+function foldersAbove(dir: string, top: string): string[] {
+	if (!isInside(dir, top) || dir === top) return [];
+	const folders: string[] = [];
+	for (let folder = dirname(dir); isInside(folder, top); folder = dirname(folder)) {
+		folders.push(folder);
+		if (folder === top) break;
+	}
+	return folders;
+}
+
 /** The sandbox-exec profile for an app, or undefined when it runs unrestricted. */
 export function sandboxProfile(grant: Grant, places: Places): string | undefined {
 	if (grant === 'full' || !ENFORCED) return undefined;
@@ -184,7 +195,10 @@ export function sandboxProfile(grant: Grant, places: Places): string | undefined
 	// The app may list that folder, but not read other files in it. Its bunfig.toml
 	// stays unreadable, which Bun skips quietly, and the parent runs Bun with
 	// --no-env-file, so it never reads a .env there.
-	const startFolder = [cwd, ...['package.json', 'tsconfig.json', 'jsconfig.json'].map(name => join(cwd, name))];
+	// `bun run` also lists every folder above it (looking for a workspace root)
+	// and stops with CouldntReadCurrentDirectory when one of them is denied, so
+	// the folders between your home and the start folder may be listed too.
+	const startFolder = [cwd, ...['package.json', 'tsconfig.json', 'jsconfig.json'].map(name => join(cwd, name)), ...foldersAbove(cwd, home)];
 	const gitConfig = runsGit(grant) ? gitConfigPaths().map(real) : [];
 	const lines = [
 		'(version 1)',

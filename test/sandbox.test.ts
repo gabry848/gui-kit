@@ -151,3 +151,20 @@ test.skipIf(!darwin)('an app writes in HOME and GUI_HOME only where it may, even
 		rmSync(join(realpathSync(tmpdir()), `gui-sandbox-${process.pid}.txt`), {force: true});
 	}
 }, 60_000);
+
+test.skipIf(!darwin)('bun run works inside the sandbox from a folder deep in HOME: the folders above it may be listed, not read', async () => {
+	// bun run lists every folder above the one it starts in, looking for a workspace root.
+	const outer = join(home, 'deep', 'workspace');
+	const project = join(outer, 'packages', 'tool');
+	mkdirSync(project, {recursive: true});
+	writeFileSync(join(outer, 'package.json'), '{"name": "outer", "workspaces": ["packages/*"]}\n');
+	writeFileSync(join(outer, 'secret.txt'), 'private');
+	writeFileSync(join(project, 'package.json'), '{"name": "tool", "scripts": {"hi": "echo hi-from-script"}}\n');
+	const app = join(home, 'apps', 'runner');
+	writeApp(app, {name: 'runner', entry: 'app.tsx', permissions: {write: ['$CWD'], run: ['*']}}, probeApp(
+		`const run = Bun.spawnSync(['bun', 'run', 'hi'], {stderr: 'pipe'});`,
+		`'script=' + (run.stdout.toString().includes('hi-from-script') ? 'ok' : run.stderr.toString().trim().split('\\n').pop()) + ' above=' + attempt(() => readFileSync(${JSON.stringify(join(outer, 'secret.txt'))}, 'utf8'))`,
+	));
+	const screen = await cli(['screen', app, '--cols', '160', '--rows', '6'], project);
+	expect(screen.stdout).toContain('script=ok above=EPERM');
+}, 60_000);
