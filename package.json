@@ -1,6 +1,22 @@
 {
   "name": "gui-kit",
   "version": "0.1.0",
+  "description": "Full-screen terminal apps for AI agents and people: an Ink 8 kit with Vim keys, components and graphics, and a CLI that runs saved apps in a sandbox.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gabry848/gui-kit.git"
+  },
+  "keywords": [
+    "terminal",
+    "tui",
+    "ink",
+    "react",
+    "bun",
+    "cli",
+    "vim",
+    "sandbox",
+    "ai-agents"
+  ],
   "private": true,
   "type": "module",
   "scripts": {
