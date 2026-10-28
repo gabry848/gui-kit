@@ -83,7 +83,8 @@ export function List<T>({items, render, text, onOpen, active = true, height: fix
 		}
 		const origin = absolutePosition(node);
 		const row = event.y - origin.y;
-		if (row < 0 || row >= rows || event.x < origin.x) {
+		// Outside the list on either side, e.g. a click in the next pane of a Split.
+		if (row < 0 || row >= rows || event.x < origin.x || event.x >= origin.x + (node.yogaNode?.getComputedWidth() ?? Infinity)) {
 			return;
 		}
 		if (event.kind === 'wheel') {

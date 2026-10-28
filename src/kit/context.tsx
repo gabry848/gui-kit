@@ -3,6 +3,7 @@ import {useApp, useInput, useStdout} from 'ink';
 import {Keymap, tokenFromInk, type Binding, type KeymapState} from './keymap.js';
 import type {InputSplitter} from './input.js';
 import {parseMouse, type MouseEvent} from './mouse.js';
+import {NotifyProvider} from './notify.js';
 import type {Caps} from './probe.js';
 
 type MouseHandler = (event: MouseEvent) => void;
@@ -161,7 +162,11 @@ export function KitProvider({caps, input, onFinish, children}: ProviderProps) {
 		finish,
 	};
 
-	return <KitContext.Provider value={kit}>{children}</KitContext.Provider>;
+	return (
+		<KitContext.Provider value={kit}>
+			<NotifyProvider>{children}</NotifyProvider>
+		</KitContext.Provider>
+	);
 }
 
 /** The key name for one control character in a chunk, if it is a key. */

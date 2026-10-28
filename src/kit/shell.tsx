@@ -2,6 +2,7 @@ import {useContext, useState, type ReactNode} from 'react';
 import {Box, Text, useApp, useWindowSize} from 'ink';
 import {KeyScope, useCommand, useKeymapState, useKeys, useKit, useMouseBarrier} from './context.js';
 import {prettyKeys, type Binding} from './keymap.js';
+import {useToasts} from './notify.js';
 import {theme} from './theme.js';
 
 const MODE_LABEL = {normal: 'NORMAL', insert: 'INSERT', command: 'COMANDO'} as const;
@@ -30,6 +31,34 @@ export function Shell({title, hint, children}: {title: string; hint?: string; ch
 			<StatusLine title={title} hint={hint} />
 			<WhichKey />
 			{overlay === 'help' ? <Help onClose={() => setOverlay(undefined)} /> : null}
+			<Toasts />
+		</Box>
+	);
+}
+
+const TOAST = {
+	info: {icon: '•', color: theme.accent},
+	success: {icon: '✓', color: theme.success},
+	warning: {icon: '!', color: theme.warning},
+	error: {icon: '✗', color: theme.danger},
+} as const;
+
+/** Notifications from useNotify, stacked at the top right; Esc dismisses them all. */
+function Toasts() {
+	const {toasts, dismiss} = useToasts();
+	const {columns} = useWindowSize();
+	useKeys([{keys: '<Esc>', desc: 'Dismiss notifications', group: 'App', run: () => dismiss()}], {active: toasts.length > 0, priority: -10});
+	if (toasts.length === 0) {
+		return null;
+	}
+	return (
+		<Box position="absolute" top={0} right={1} flexDirection="column" alignItems="flex-end">
+			{toasts.map(toast => (
+				<Box key={toast.id} borderStyle="round" borderColor={TOAST[toast.kind].color} backgroundColor={theme.background} paddingX={1} maxWidth={Math.max(20, Math.floor(columns / 2))}>
+					<Text color={TOAST[toast.kind].color}>{TOAST[toast.kind].icon} </Text>
+					<Text color={theme.text}>{toast.text}</Text>
+				</Box>
+			))}
 		</Box>
 	);
 }
